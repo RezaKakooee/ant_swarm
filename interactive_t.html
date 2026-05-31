@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>T-Barrier Threading Sandbox</title>
+<style>
+  body { margin: 0; background: #1e1e1e; color: #ddd; font-family: monospace; }
+  #wrap { display: flex; flex-direction: column; align-items: center; padding: 16px; }
+  canvas { background: #b8b8b8; border: 1px solid #444; cursor: grab; }
+  canvas.grabbing { cursor: grabbing; }
+  #hud { margin: 10px 0; font-size: 14px; line-height: 1.7; }
+  #hud b { color: #fff; }
+  .ok { color: #4caf50; } .bad { color: #ef5350; }
+  #controls { font-size: 13px; color: #aaa; max-width: 720px; text-align: center; }
+  label { margin: 0 8px; cursor: pointer; }
+  kbd { background:#333; border:1px solid #555; border-radius:3px; padding:1px 5px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="cv" width="800" height="461"></canvas>
+  <div style="font-size:12px;color:#888;margin-top:4px;">geometry loaded from <code>config.yaml</code> → <code>web_config.js</code></div>
+  <div id="hud">
+    angle: <b id="ang">0°</b> &nbsp;|&nbsp;
+    collision: <b id="col">—</b> &nbsp;|&nbsp;
+    status: <b id="status">—</b>
+  </div>
+  <div id="controls">
+    <b>Left-drag</b> to move. &nbsp; <b>Right-drag</b> to rotate. &nbsp; <kbd>R</kbd> reset.<br>
+    <label style="display:inline-block;margin:8px 0;">
+      angle <input type="range" id="angSlider" min="-180" max="180" value="0" step="1" style="width:300px;vertical-align:middle;">
+    </label><br>
+    <label><input type="checkbox" id="trueCol" checked> true collision (oriented rect)</label>
+    <label><input type="checkbox" id="aabbCol"> show env's conservative AABB collision</label>
+  </div>
+</div>
+<!-- single source of truth: generated from config.yaml -->
+<script src="web_config.js"></script>
+<script>
+// ---- Geometry derived from CONFIG (config.yaml) ----
+const S = CONFIG.scene_scale;
+const W = CONFIG.world.width * S, H = CONFIG.world.height * S;
+const TH = CONFIG.tshape.thickness * S, HT = TH/2;
+const STEM = CONFIG.tshape.stem_len * S;
+const CAPB = CONFIG.tshape.cap_big_len * S, CAPS = CONFIG.tshape.cap_small_len * S;
+// sub-rects: [local_cx, local_cy, half_x, half_y]
+const RECTS = [
+  [0.0,      0.0, STEM/2, HT],     // stem
+  [-STEM/2,  0.0, HT,     CAPB/2], // big cap
+  [ STEM/2,  0.0, HT,     CAPS/2], // small cap
+];
+const WALL_LEN = CONFIG.walls.length * S, HL = WALL_LEN/2;
+const WALL_HT = (CONFIG.walls.thickness * S)/2;
+const WALL_X = CONFIG.walls.x_columns.map(x => x*S);
+// collision walls: upper segment centred at H-HL, lower at HL
+const WALLS = []; // {cx,cy,hx,hy}
+for (const wx of WALL_X) {
+  WALLS.push({cx: wx, cy: H - HL, hx: WALL_HT, hy: HL}); // upper
+  WALLS.push({cx: wx, cy: HL,     hx: WALL_HT, hy: HL}); // lower
+}
+const GOAL = CONFIG.goal.pos.map(v => v*S);
+const GOAL_R = CONFIG.goal.reach_radius * S;
+// start pose: centre of the spawn x-band, mid-height
+const SPAWN = [ (CONFIG.spawn.x_range[0]+CONFIG.spawn.x_range[1])/2 * S, H/2 ];
+
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+cv.height = Math.round(cv.width * H / W);   // keep aspect from config
+const SCALE = cv.width / W;
+// world -> px
+const px = (x) => x * SCALE;
+const py = (y) => (H - y) * SCALE;
+
+let T = { x: SPAWN[0], y: SPAWN[1], a: 0.0 };
+let dragging = false, grabDX = 0, grabDY = 0;     // left-drag move
+let rotating = false, rotStartMouse = 0, rotStartAngle = 0; // right-drag rotate
+
+// ---- geometry helpers ----
+function rectCorners(rc, T) {  // world corners of a sub-rect at pose T
+  const [lcx, lcy, hx, hy] = rc;
+  const c = Math.cos(T.a), s = Math.sin(T.a);
+  const pts = [[ -hx,-hy],[hx,-hy],[hx,hy],[-hx,hy]];
+  return pts.map(([dx,dy]) => {
+    const lx = lcx+dx, ly = lcy+dy;
+    return [T.x + c*lx - s*ly, T.y + s*lx + c*ly];
+  });
+}
+function aabbOf(corners) {
+  let xmn=1e9,xmx=-1e9,ymn=1e9,ymx=-1e9;
+  for (const [x,y] of corners){ xmn=Math.min(xmn,x);xmx=Math.max(xmx,x);ymn=Math.min(ymn,y);ymx=Math.max(ymx,y);}
+  return [xmn,xmx,ymn,ymx];
+}
+function project(corners, ax, ay){ // min/max projection on axis (ax,ay)
+  let mn=1e9, mx=-1e9;
+  for (const [x,y] of corners){ const p=x*ax+y*ay; mn=Math.min(mn,p); mx=Math.max(mx,p);}
+  return [mn,mx];
+}
+function overlapSAT(cA, cB){ // OBB vs OBB via SAT
+  // axes: edge normals of both boxes (use first two edges of each)
+  const axes = [];
+  for (const c of [cA, cB]){
+    for (let i=0;i<2;i++){
+      const ax = c[i+1][0]-c[i][0], ay = c[i+1][1]-c[i][1];
+      const len = Math.hypot(ax,ay) || 1;
+      axes.push([-ay/len, ax/len]);
+    }
+  }
+  for (const [ax,ay] of axes){
+    const [amn,amx]=project(cA,ax,ay), [bmn,bmx]=project(cB,ax,ay);
+    if (amx < bmn || bmx < amn) return false; // separating axis
+  }
+  return true;
+}
+function wallCorners(w){
+  return [[w.cx-w.hx,w.cy-w.hy],[w.cx+w.hx,w.cy-w.hy],[w.cx+w.hx,w.cy+w.hy],[w.cx-w.hx,w.cy+w.hy]];
+}
+
+// True collision: oriented sub-rects vs wall AABBs + world bounds
+function trueCollision(T){
+  for (const rc of RECTS){
+    const corners = rectCorners(rc, T);
+    const [xmn,xmx,ymn,ymx] = aabbOf(corners);
+    if (xmn<0||xmx>W||ymn<0||ymx>H) return true; // world bound
+    for (const w of WALLS){
+      if (overlapSAT(corners, wallCorners(w))) return true;
+    }
+  }
+  return false;
+}
+// Env's conservative collision: AABB of each rotated sub-rect vs wall AABB
+function aabbCollision(T){
+  for (const rc of RECTS){
+    const [xmn,xmx,ymn,ymx] = aabbOf(rectCorners(rc, T));
+    if (xmn<0||xmx>W||ymn<0||ymx>H) return true;
+    for (const w of WALLS){
+      const wx0=w.cx-w.hx, wx1=w.cx+w.hx, wy0=w.cy-w.hy, wy1=w.cy+w.hy;
+      if (xmn<wx1 && xmx>wx0 && ymn<wy1 && ymx>wy0) return true;
+    }
+  }
+  return false;
+}
+
+// ---- rendering ----
+function draw(){
+  ctx.clearRect(0,0,cv.width,cv.height);
+  // walls (draw to world edges, matching the Python render look)
+  // lower wall spans y in [0, 2*HL]; upper wall spans y in [H-2*HL, H]
+  ctx.fillStyle = '#5f6066';
+  const gapLo = 2*HL, gapHi = H - 2*HL;   // lower wall top / upper wall bottom
+  for (const wx of WALL_X){
+    ctx.fillRect(px(wx-WALL_HT), py(H),     2*WALL_HT*SCALE, (H-gapHi)*SCALE); // upper col
+    ctx.fillRect(px(wx-WALL_HT), py(gapLo), 2*WALL_HT*SCALE, gapLo*SCALE);     // lower col
+  }
+  // goal
+  ctx.fillStyle = '#2e8b2e';
+  ctx.fillRect(px(GOAL[0])-5, py(GOAL[1])-5, 10, 10);
+
+  const showTrue = document.getElementById('trueCol').checked;
+  const showAabb = document.getElementById('aabbCol').checked;
+  const colT = trueCollision(T);
+  const colA = aabbCollision(T);
+
+  // conservative AABB overlay
+  if (showAabb){
+    ctx.strokeStyle = colA ? 'rgba(239,83,80,0.9)' : 'rgba(255,193,7,0.7)';
+    ctx.lineWidth = 1.5;
+    for (const rc of RECTS){
+      const [xmn,xmx,ymn,ymx] = aabbOf(rectCorners(rc, T));
+      ctx.strokeRect(px(xmn), py(ymx), (xmx-xmn)*SCALE, (ymx-ymn)*SCALE);
+    }
+  }
+  // T-shape (oriented)
+  const collided = (showTrue && colT) || (showAabb && colA && !showTrue);
+  ctx.fillStyle = collided ? '#b71c1c' : '#c0392b';
+  for (const rc of RECTS){
+    const c = rectCorners(rc, T);
+    ctx.beginPath();
+    ctx.moveTo(px(c[0][0]), py(c[0][1]));
+    for (let i=1;i<4;i++) ctx.lineTo(px(c[i][0]), py(c[i][1]));
+    ctx.closePath(); ctx.fill();
+  }
+  // junction dots (the two ant anchor points)
+  ctx.fillStyle = '#fff';
+  for (const off of [[-STEM/2,0],[STEM/2,0]]){
+    const c=Math.cos(T.a),s=Math.sin(T.a);
+    const wx=T.x+c*off[0]-s*off[1], wy=T.y+s*off[0]+c*off[1];
+    ctx.beginPath(); ctx.arc(px(wx),py(wy),6,0,7); ctx.fill();
+  }
+
+  // HUD
+  document.getElementById('ang').textContent = (T.a*180/Math.PI).toFixed(0)+'°';
+  document.getElementById('angSlider').value = Math.round(T.a*180/Math.PI);
+  const colEl = document.getElementById('col');
+  colEl.textContent = 'true='+(colT?'YES':'no')+'  aabb='+(colA?'YES':'no');
+  colEl.className = colT ? 'bad' : 'ok';
+  const reached = Math.hypot(T.x-GOAL[0], T.y-GOAL[1]) < GOAL_R;
+  const past = T.x > WALL_X[1] + 0.05;
+  const st = document.getElementById('status');
+  if (reached){ st.textContent='REACHED GOAL!'; st.className='ok'; }
+  else if (past){ st.textContent='through the barrier ✓'; st.className='ok'; }
+  else { st.textContent='left of barrier'; st.className=''; }
+}
+
+// ---- input ----
+function mouseWorld(e){
+  const r = cv.getBoundingClientRect();
+  const mx = (e.clientX - r.left) * (cv.width / r.width);
+  const my = (e.clientY - r.top)  * (cv.height / r.height);
+  return [mx/SCALE, H - my/SCALE];
+}
+function angleToMouse(e){ const [wx,wy]=mouseWorld(e); return Math.atan2(wy-T.y, wx-T.x); }
+cv.addEventListener('contextmenu', e=>e.preventDefault()); // allow right-drag
+cv.addEventListener('mousedown', e=>{
+  if (e.button === 2){            // right button → rotate
+    rotating=true; rotStartMouse=angleToMouse(e); rotStartAngle=T.a;
+  } else {                        // left button → move
+    const [wx,wy]=mouseWorld(e); dragging=true; grabDX=T.x-wx; grabDY=T.y-wy;
+    cv.classList.add('grabbing');
+  }
+  e.preventDefault();
+});
+window.addEventListener('mouseup', ()=>{ dragging=false; rotating=false; cv.classList.remove('grabbing'); });
+window.addEventListener('mousemove', e=>{
+  if(dragging){ const [wx,wy]=mouseWorld(e); T.x=wx+grabDX; T.y=wy+grabDY; draw(); }
+  else if(rotating){ T.a = rotStartAngle + (angleToMouse(e) - rotStartMouse); draw(); }
+});
+document.getElementById('angSlider').addEventListener('input', e=>{
+  T.a = (+e.target.value) * Math.PI/180; draw();
+});
+window.addEventListener('keydown', e=>{
+  if(e.key.toLowerCase()==='r'){ T={x:SPAWN[0],y:SPAWN[1],a:0}; draw(); }
+});
+['trueCol','aabbCol'].forEach(id=>document.getElementById(id).addEventListener('change',draw));
+draw();
+</script>
+</body>
+</html>
