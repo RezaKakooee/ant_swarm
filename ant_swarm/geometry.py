@@ -1,4 +1,4 @@
-"""Geometry utilities shared by the T-shape, layout, and env.
+"""Geometry utilities shared across the package.
 
 Pure functions + the ``LocalRect`` primitive.  No simulator/config knowledge.
 """

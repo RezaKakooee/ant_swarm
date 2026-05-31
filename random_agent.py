@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
-from t_barrier_swarm_env import AntSwarmEnv  # noqa: E402
+from ant_swarm import AntSwarmEnv  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).parent
 STORAGE_DIR = PROJECT_ROOT / "storage_local"

@@ -1,14 +1,17 @@
 """Generate ``web_config.js`` from ``config.yaml`` so the HTML stays in sync.
 
 Run after editing config.yaml:
-    python gen_web_config.py
+    python interactive/gen_web_config.py
 """
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
-from swarm_config import load_config_dict
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+from ant_swarm.config import load_config_dict  # noqa: E402
 
 OUT = Path(__file__).parent / "web_config.js"
 

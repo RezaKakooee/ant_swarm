@@ -1,12 +1,11 @@
-"""Load the single-source-of-truth ``config.yaml`` into an attribute namespace.
+"""Load the project's ``config.yaml`` (single source of truth) into a namespace.
 
-    from swarm_config import load_config
+    from ant_swarm.config import load_config
     cfg = load_config()
     cfg.world.width          # 1.25
-    cfg.walls.x_columns      # [0.46, 0.70]
+    cfg.walls.x_columns      # [0.52, 0.74]
 
-Lists of scalars stay plain lists; nested mappings become ``SimpleNamespace``
-so they read like attributes.
+The YAML lives at the project root (one level above this package).
 """
 from __future__ import annotations
 
@@ -15,7 +14,8 @@ from pathlib import Path
 
 import yaml
 
-CONFIG_PATH = Path(__file__).parent / "config.yaml"
+# package dir → project root → config.yaml
+CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
 
 
 def _to_ns(obj):

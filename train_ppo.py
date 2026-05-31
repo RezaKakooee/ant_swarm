@@ -19,7 +19,7 @@ from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback,
 from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 
 sys.path.insert(0, str(Path(__file__).parent))
-from t_barrier_swarm_env import AntSwarmEnv  # noqa: E402
+from ant_swarm import AntSwarmEnv  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).parent
 STORAGE_DIR  = PROJECT_ROOT / "storage_local"

@@ -5,11 +5,9 @@ oriented-rectangle SAT) and tested against a ``Layout``'s wall AABBs.
 """
 from __future__ import annotations
 
-import math
-
 import numpy as np
 
-from geometry import LocalRect, obb_aabb_overlap, rotation_matrix
+from .geometry import LocalRect, obb_aabb_overlap, rotation_matrix
 
 
 class TShape:
@@ -50,8 +48,7 @@ class TShape:
 
     def clone_at(self, center, angle):
         import copy
-        new = copy.copy(self)
-        return new.set_pose(center, angle)
+        return copy.copy(self).set_pose(center, angle)
 
     # -- transforms ----------------------------------------------------
     def rot(self):
@@ -108,11 +105,7 @@ class TShape:
 
 def sample_free_pose(tshape: TShape, layout, rng, *, x_range, angle_range,
                      margin=0.06, max_tries=500):
-    """Sample a collision-free (center, angle) in ``x_range`` (scaled coords).
-
-    Restricts x to the spawn band (left of the barrier) and clears walls + the
-    world boundary.  Falls back to the band centre at angle 0 if no pose found.
-    """
+    """Sample a collision-free (center, angle) in ``x_range`` (scaled coords)."""
     s = layout.scene_scale
     W, H = layout.world_size
     x_lo, x_hi = x_range[0] * s, x_range[1] * s
@@ -130,3 +123,40 @@ def sample_free_pose(tshape: TShape, layout, rng, *, x_range, angle_range,
         if not probe.overlaps_walls(layout):
             return np.array([cx, cy], dtype=np.float32), angle
     return np.array([(x_lo + x_hi) / 2, H / 2], dtype=np.float32), 0.0
+
+
+def make_attachment_offsets(tshape: TShape, n_ants: int, rng, ant_offsets=None) -> np.ndarray:
+    """Local-frame attachment points for the ants on the T-shape.
+
+    * explicit ``ant_offsets`` → used verbatim
+    * ``n_ants == 2`` → one at each T-junction (stem ↔ cap)
+    * otherwise → uniform random samples on the T perimeter
+    """
+    if ant_offsets is not None:
+        return np.array(ant_offsets, dtype=np.float32)
+    if n_ants == 2:
+        return np.array([[-tshape.stem_len / 2, 0.0],
+                         [ tshape.stem_len / 2, 0.0]], dtype=np.float32)
+
+    rects = tshape.rects
+    perims = [4.0 * (float(r.half_size[0]) + float(r.half_size[1])) for r in rects]
+    total = sum(perims)
+    probs = [p / total for p in perims]
+    offsets = []
+    for _ in range(n_ants):
+        r_idx = int(rng.choice(len(rects), p=probs))
+        rect = rects[r_idx]
+        cx, cy = float(rect.center[0]), float(rect.center[1])
+        hx, hy = float(rect.half_size[0]), float(rect.half_size[1])
+        perim = 2 * (2 * hx + 2 * hy)
+        t = rng.uniform(0, perim)
+        if t < 2 * hx:
+            x, y = cx - hx + t, cy - hy
+        elif t < 2 * hx + 2 * hy:
+            x, y = cx + hx, cy - hy + (t - 2 * hx)
+        elif t < 4 * hx + 2 * hy:
+            x, y = cx + hx - (t - 2 * hx - 2 * hy), cy + hy
+        else:
+            x, y = cx - hx, cy + hy - (t - 4 * hx - 2 * hy)
+        offsets.append([x, y])
+    return np.array(offsets, dtype=np.float32)
