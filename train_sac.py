@@ -1,10 +1,14 @@
-"""Train PPO (SB3) on the AntSwarmBarrier environment.
+"""Train SAC (SB3) on the AntSwarmBarrier environment.
+
+SAC advantages over PPO for this task:
+  * Off-policy — far more sample-efficient; learns from every transition
+  * Auto entropy tuning — automatically balances exploration vs exploitation
+  * Designed for continuous action spaces (our [angle, magnitude] per ant)
 
 Usage:
-    python train_ppo.py
-    python train_ppo.py --timesteps 5_000_000 --n-envs 8
-    python train_ppo.py --no-wandb           # TensorBoard only
-    python train_ppo.py --eval --model storage_local/2026_05_30_1200__ant__ppo/checkpoints/best/best_model
+    python train_sac.py
+    python train_sac.py --timesteps 5_000_000 --no-wandb
+    python train_sac.py --eval --model storage_local/<run>/checkpoints/best/best_model
 """
 from __future__ import annotations
 
@@ -16,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 from gymnasium.wrappers import FlattenObservation
-from stable_baselines3 import PPO
+from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback, EvalCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 
@@ -31,10 +35,9 @@ WANDB_ENTITY  = "kakooee"
 
 
 def _make_run_name() -> str:
-    """Timestamped run name: ``ant__YYYYMMDD_HHMM__<jobid>__train_ppo.py``."""
     ts = datetime.now().strftime("%Y%m%d_%H%M")
     job_id = os.environ.get("SLURM_JOB_ID", "local")
-    return f"ant__{ts}__{job_id}__train_ppo.py"
+    return f"ant__{ts}__{job_id}__train_sac.py"
 
 
 def _make_run_dir(run_name: str) -> Path:
@@ -95,7 +98,6 @@ class RenderCallback(BaseCallback):
             from stable_baselines3.common.logger import TensorBoardOutputFormat
             for fmt in self.logger.output_formats:
                 if isinstance(fmt, TensorBoardOutputFormat):
-                    # SummaryWriter.add_video expects (N, T, C, H, W) uint8
                     vid = np.stack(frames)[None].transpose(0, 1, 4, 2, 3)
                     fmt.writer.add_video("render/policy", vid,
                                          global_step=self.num_timesteps, fps=self.fps)
@@ -145,38 +147,40 @@ def train(args):
             entity=WANDB_ENTITY,
             name=run_name,
             dir=str(STORAGE_DIR),   # wandb/ folder lives under storage_local
-            group="ppo",
-            tags=["ppo", "ant_swarm"],
+            group="sac",
+            tags=["sac", "ant_swarm"],
             config={
                 "timesteps": args.timesteps,
-                "n_envs": args.n_envs,
-                "n_steps": args.n_steps,
+                "buffer_size": args.buffer_size,
+                "batch_size": args.batch_size,
+                "learning_starts": args.learning_starts,
                 "gamma": 0.999,
-                "ent_coef": 0.05,
+                "ent_coef": "auto",
                 "learning_rate": 3e-4,
             },
-            sync_tensorboard=True,   # mirrors SB3's TB scalars into wandb
+            sync_tensorboard=True,
             save_code=False,
         )
         print(f"W&B run   : {wandb_run.url}", flush=True)
 
-    vec_env = DummyVecEnv([make_env(i) for i in range(args.n_envs)])
-    vec_env = VecMonitor(vec_env)
+    # SAC works with a single env (off-policy; parallelism via replay buffer, not rollouts)
+    env = make_env(seed=0)()
+    env = VecMonitor(DummyVecEnv([lambda: env]))
 
-    eval_env = DummyVecEnv([make_env(seed=999)])
-    eval_env = VecMonitor(eval_env)
+    eval_env = VecMonitor(DummyVecEnv([make_env(seed=999)]))
 
-    model = PPO(
+    model = SAC(
         "MlpPolicy",
-        vec_env,
-        n_steps=args.n_steps,
-        batch_size=512,
-        n_epochs=10,
-        gamma=0.999,
-        gae_lambda=0.95,
-        clip_range=0.2,
-        ent_coef=0.05,
+        env,
+        buffer_size=args.buffer_size,
+        batch_size=args.batch_size,
+        learning_starts=args.learning_starts,
+        gamma=0.999,       # high gamma: sparse reward at episode end must propagate far
+        tau=0.005,
+        ent_coef="auto",   # automatic entropy tuning — key SAC advantage
         learning_rate=3e-4,
+        train_freq=1,
+        gradient_steps=1,
         verbose=1,
         tensorboard_log=str(tb_dir),
         seed=0,
@@ -184,21 +188,21 @@ def train(args):
 
     callbacks = [
         CheckpointCallback(
-            save_freq=max(50_000 // args.n_envs, 1),
+            save_freq=50_000,
             save_path=str(ckpt_dir),
-            name_prefix="ppo",
+            name_prefix="sac",
         ),
         EvalCallback(
             eval_env,
             best_model_save_path=str(ckpt_dir / "best"),
             log_path=str(ckpt_dir / "eval_logs"),
-            eval_freq=max(20_000 // args.n_envs, 1),
+            eval_freq=20_000,
             n_eval_episodes=10,
             deterministic=True,
             verbose=1,
         ),
         RenderCallback(
-            render_freq=max(args.render_freq // args.n_envs, 1),
+            render_freq=args.render_freq,
             save_dir=rend_dir,
             fps=30,
             seed=0,
@@ -207,14 +211,11 @@ def train(args):
 
     if args.wandb:
         from wandb.integration.sb3 import WandbCallback
-        callbacks.append(WandbCallback(
-            gradient_save_freq=0,   # skip gradient logging (slow)
-            verbose=0,
-        ))
+        callbacks.append(WandbCallback(gradient_save_freq=0, verbose=0))
 
     model.learn(total_timesteps=args.timesteps, callback=callbacks)
 
-    final_path = ckpt_dir / "ppo_final"
+    final_path = ckpt_dir / "sac_final"
     model.save(str(final_path))
     print(f"Saved → {final_path}.zip", flush=True)
 
@@ -224,7 +225,7 @@ def train(args):
 
 def evaluate(args):
     env = FlattenObservation(AntSwarmEnv(seed=42))
-    model = PPO.load(args.model, env=env)
+    model = SAC.load(args.model, env=env)
 
     returns, lengths, successes = [], [], []
     for ep in range(args.eval_episodes):
@@ -248,14 +249,16 @@ def evaluate(args):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--timesteps", type=int, default=50_000_000)
-    p.add_argument("--n-envs", type=int, default=8)
-    p.add_argument("--n-steps", type=int, default=4096,
-                   help="PPO rollout steps per env per update")
+    p.add_argument("--timesteps", type=int, default=5_000_000,
+                   help="SAC is sample-efficient; 5M is often enough")
+    p.add_argument("--buffer-size", type=int, default=1_000_000)
+    p.add_argument("--batch-size", type=int, default=256)
+    p.add_argument("--learning-starts", type=int, default=10_000,
+                   help="fill replay buffer before first gradient step")
     p.add_argument("--eval", action="store_true")
     p.add_argument("--model", type=str, default=None)
     p.add_argument("--eval-episodes", type=int, default=20)
-    p.add_argument("--render-freq", type=int, default=500_000,
+    p.add_argument("--render-freq", type=int, default=100_000,
                    help="save a policy GIF every this many env steps")
     p.add_argument("--no-wandb", dest="wandb", action="store_false",
                    help="disable W&B logging (on by default)")
