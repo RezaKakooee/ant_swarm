@@ -16,14 +16,14 @@ world:
   height: 0.72
 
 walls:                    # the two inner barrier columns
-  x_columns: [0.52, 0.74] # x position of each vertical wall column
-  length: 0.285           # length of each wall segment (gap = height - 2*length)
+  x_columns: [0.525, 0.735] # spacing 0.210 (sandbox-tuned)
+  length: 0.285           # gap 0.150; length of each wall segment (gap = height - 2*length)
   thickness: 0.02
   render_extra: 0.20      # cosmetic outward extension when rendering
   height: 0.08            # (3-D only) unused by the 2-D sim
 
 tshape:                   # the movable T-shaped object
-  stem_len: 0.22
+  stem_len: 0.265         # longer stem = harder to thread (sandbox-tuned)
   cap_big_len: 0.18
   cap_small_len: 0.09
   thickness: 0.02
@@ -41,23 +41,89 @@ spawn:                    # where the T is placed at episode start (left of barr
   max_tries: 500
 
 ants:
-  n: 2
+  n: 1                    # 1 = single agent (centre of stem), >=2 = multi-agent (cap junctions)
+  single_agent_spin: true # n==1 only: add a spin/torque action so it can rotate (else translate-only)
   radius: 0.005
   z: 0.04                 # (3-D only)
   mass: 0.001             # (unused by current point-force model)
 
-physics:
-  push_strength: 0.00025  # per-ant max force magnitude
+motion:
+  mode: dynamic         # kinematic = direct move (simple) | dynamic = forces+momentum
+  # --- kinematic params (mode: kinematic) ---
+  step_len: 0.01          # world units translated per step at full magnitude
+  rot_step: 0.10          # radians rotated per step at |rotation|=1
+
+physics:                  # only used when motion.mode == dynamic
+  push_strength: 0.0005   # per-ant max force magnitude (2x: faster translation)
   object_mass: 0.5
-  object_inertia: 0.04
+  object_inertia: 0.01    # 4x lower -> ~4x faster rotation
   linear_friction: 0.96
   angular_friction: 0.94
   substeps: 10
+  spin_strength: null     # single-agent torque per |spin|=1; null -> push_strength*stem/2
   boundary_margin: 0.025  # keep-out margin from world edge
   restitution_wall: -0.2  # velocity scaling on wall hit
   restitution_bound: -0.15
 
 env:
-  max_steps: 2000
+  max_steps: 500              # ~2-3x a good trajectory; shorter = more episodes, tighter credit
   reward_progress_coef: 0.1   # dense shaping weight
   reward_success: 1.0         # sparse bonus on reaching goal
+
+# Gap-size curriculum (read by train scripts). When enabled, the TRAINING barrier
+# starts wide/easy and narrows toward the hard target as success rate climbs; the
+# static walls.length above is then overridden. Eval is held at the hard target.
+curriculum:
+  enabled: true
+  start_wall_len: 0.245       # easy: wide gap (~0.31, straight-push possible)
+  target_wall_len: 0.285      # hard: narrow gap (~0.15, threading required)
+  step: 0.01                  # wall-length increment per advance
+  success_threshold: 0.7      # advance when rolling success rate >= this
+  window: 100                 # episodes in the success-rate window
+  max_steps_per_stage: 2000000  # stall safety: force-advance if a stage drags this long (null = off)
+  # early stopping: stop once the HARD target is mastered for a sustained window
+  stop_on_master: true
+  stop_success: 0.9             # stop when success >= this ...
+  stop_window: 200              # ... over this many consecutive episodes at the target
+
+# Run settings shared by both train scripts (no argparse — everything is here).
+run:
+  wandb: true               # log to Weights & Biases (sync_tensorboard mirrors TB)
+  render_freq: 500000       # save a policy GIF every N env steps
+  init_from: storage_local/ant__20260601_1714__13102512__train_sac__single/checkpoints/best/best_model.zip         # warm-start policy weights from this checkpoint .zip (null = scratch)
+  eval: false               # true = evaluate `eval_model` instead of training
+  eval_model: null          # checkpoint .zip to evaluate when eval: true
+  eval_episodes: 20
+
+# PPO hyperparameters + exploration knobs (read by train_ppo.py).
+ppo:
+  # run
+  timesteps: 50000000
+  n_envs: 8
+  # core
+  n_steps: 4096
+  batch_size: 512
+  n_epochs: 100
+  gamma: 0.99               # effective horizon ~100; matches the shorter episodes
+  gae_lambda: 0.95
+  clip_range: 0.2
+  learning_rate: 0.0003
+  # --- exploration ---
+  ent_coef: 0.05            # entropy bonus (primary exploration knob)
+  ent_coef_final: 0.005      # set a float to linearly anneal ent_coef -> this over training
+  use_sde: true            # gSDE: temporally-correlated (coherent) exploration
+  sde_sample_freq: 16       # resample gSDE noise every N steps (only if use_sde)
+  log_std_init: 0.5         # initial action-distribution log-std; raise (~0.5) to widen
+
+# SAC hyperparameters (read by train_sac.py).
+sac:
+  # run
+  timesteps: 15000000
+  # core
+  buffer_size: 1000000
+  batch_size: 256
+  learning_starts: 10000
+  gamma: 0.99
+  tau: 0.005
+  learning_rate: 0.0003
+  ent_coef: auto            # SAC auto entropy tuning

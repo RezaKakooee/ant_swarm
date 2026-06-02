@@ -24,11 +24,12 @@ from .action import ActionModel
 from .observation import ObservationModel
 from .reward import RewardModel
 from .render import Renderer
+from .snapshot import save_code
 from .ant_swarm import AntSwarmEnv, GymCompatWrapper, make_compat_env
 from ._gym import gym
 
 __all__ = [
-    "AntSwarmEnv", "GymCompatWrapper", "make_compat_env", "Renderer",
+    "AntSwarmEnv", "GymCompatWrapper", "make_compat_env", "Renderer", "save_code",
     "load_config", "load_config_dict",
     "Layout", "TShape", "SwarmState",
     "ActionModel", "ObservationModel", "RewardModel",

@@ -62,6 +62,39 @@ class SwarmState:
         return float(np.linalg.norm(self.obj.center - self.layout.goal))
 
     # ------------------------------------------------------------------
+    def _bad_pose(self) -> bool:
+        """True if the T overlaps a wall or pokes outside the world."""
+        if self.obj.overlaps_walls(self.layout):
+            return True
+        W, H = self.layout.world_size
+        c = self.obj.world_corners()
+        return bool(c[:, 0].min() < 0 or c[:, 0].max() > W
+                    or c[:, 1].min() < 0 or c[:, 1].max() > H)
+
+    def apply_kinematic(self, direction, rotation, step_len, rot_step):
+        """Directly move the T: translate along `direction`, rotate by `rotation`.
+
+        No forces/momentum. Collisions are handled by **rejecting** the offending
+        component: try the full move, then translate-only, then rotate-only, then
+        stay put — so the T slides along walls instead of passing through.
+        """
+        obj = self.obj
+        dpos = step_len * np.array([np.cos(direction), np.sin(direction)], dtype=np.float32)
+        dang = rot_step * float(rotation)
+        prev_c, prev_a = obj.center.copy(), obj.angle
+
+        obj.center = prev_c + dpos
+        obj.angle = prev_a + dang
+        if self._bad_pose():
+            obj.angle = prev_a                     # translate only
+            if self._bad_pose():
+                obj.center = prev_c                # rotate only
+                obj.angle = prev_a + dang
+                if self._bad_pose():
+                    obj.angle = prev_a             # stay put
+        self._update_ants()
+
+    # ------------------------------------------------------------------
     def integrate(self, force, torque):
         """Advance the T-shape one env step under a wrench, resolving collisions."""
         obj, lay = self.obj, self.layout

@@ -36,8 +36,16 @@ class Layout:
             for wx, wy in self.wall_positions
         ]
 
+        # "Heads" = the inner gap-facing tip of each wall segment (the corners
+        # the T-shape must clear when threading the gap). One per segment.
+        self.wall_heads = np.array(
+            [(wx, (wy - hl) if wy > H / 2 else (wy + hl)) for wx, wy in self.wall_positions],
+            dtype=np.float32,
+        )
+
         self.goal = np.array(cfg.goal.pos, dtype=np.float32) * s
         self.reach_radius = cfg.goal.reach_radius * s
+        self.world_diag = float(np.hypot(W, H))
 
     @property
     def gap(self) -> float:

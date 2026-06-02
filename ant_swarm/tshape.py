@@ -129,11 +129,14 @@ def make_attachment_offsets(tshape: TShape, n_ants: int, rng, ant_offsets=None) 
     """Local-frame attachment points for the ants on the T-shape.
 
     * explicit ``ant_offsets`` → used verbatim
+    * ``n_ants == 1`` → single agent at the middle of the stem (origin)
     * ``n_ants == 2`` → one at each T-junction (stem ↔ cap)
     * otherwise → uniform random samples on the T perimeter
     """
     if ant_offsets is not None:
         return np.array(ant_offsets, dtype=np.float32)
+    if n_ants == 1:
+        return np.array([[0.0, 0.0]], dtype=np.float32)  # middle of the stem
     if n_ants == 2:
         return np.array([[-tshape.stem_len / 2, 0.0],
                          [ tshape.stem_len / 2, 0.0]], dtype=np.float32)

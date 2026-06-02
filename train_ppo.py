@@ -1,16 +1,16 @@
 """Train PPO (SB3) on the AntSwarmBarrier environment.
 
-Usage:
+No CLI args — everything is configured in ``config.yaml`` (`run:` + `ppo:`
+sections). To evaluate instead of train, set `run.eval: true` and
+`run.eval_model: <checkpoint.zip>`. To warm-start, set `run.init_from`.
+
     python train_ppo.py
-    python train_ppo.py --timesteps 5_000_000 --n-envs 8
-    python train_ppo.py --no-wandb           # TensorBoard only
-    python train_ppo.py --eval --model storage_local/2026_05_30_1200__ant__ppo/checkpoints/best/best_model
 """
 from __future__ import annotations
 
-import argparse
 import os
 import sys
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 
@@ -21,20 +21,83 @@ from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback,
 from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 
 sys.path.insert(0, str(Path(__file__).parent))
-from ant_swarm import AntSwarmEnv  # noqa: E402
+from ant_swarm import AntSwarmEnv, load_config, save_code  # noqa: E402
+from train_utils import SuccessTrajectoryCallback, CurriculumCallback  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).parent
 STORAGE_DIR  = PROJECT_ROOT / "storage_local"
+
+# Defaults if config.yaml lacks the `run:` / `ppo:` sections.
+RUN_DEFAULTS = dict(
+    wandb=True, render_freq=500_000, init_from=None,
+    eval=False, eval_model=None, eval_episodes=20,
+)
+PPO_DEFAULTS = dict(
+    timesteps=50_000_000, n_envs=8,
+    n_steps=4096, batch_size=512, n_epochs=10, gamma=0.99, gae_lambda=0.95,
+    clip_range=0.2, learning_rate=3e-4,
+    ent_coef=0.05, ent_coef_final=None, use_sde=False, sde_sample_freq=16,
+    log_std_init=0.0,
+)
+
+
+def _settings(cfg) -> dict:
+    """Merge the `run:` + `ppo:` config sections into one dict (with fallbacks)."""
+    run = getattr(cfg, "run", None)
+    ppo = getattr(cfg, "ppo", None)
+    s = {k: getattr(run, k, d) for k, d in RUN_DEFAULTS.items()}
+    s.update({k: getattr(ppo, k, d) for k, d in PPO_DEFAULTS.items()})
+    return s
+
+
+class EntCoefAnneal(BaseCallback):
+    """Linearly anneal PPO's entropy coefficient from `start` to `final`."""
+
+    def __init__(self, start: float, final: float, total_timesteps: int):
+        super().__init__()
+        self.start, self.final, self.total = start, final, total_timesteps
+
+    def _on_step(self) -> bool:
+        frac = min(self.num_timesteps / max(self.total, 1), 1.0)
+        self.model.ent_coef = self.start + frac * (self.final - self.start)
+        return True
+
+
+class EpisodeMetricsCallback(BaseCallback):
+    """Log success rate + final distance-to-goal over a rolling window of episodes.
+
+    (Reward and length are already logged by VecMonitor as rollout/ep_rew_mean
+    and rollout/ep_len_mean; this adds the task-specific signals.)
+    """
+
+    def __init__(self, reach_radius: float, window: int = 100):
+        super().__init__()
+        self.reach_radius = reach_radius
+        self.success = deque(maxlen=window)
+        self.final_dist = deque(maxlen=window)
+
+    def _on_step(self) -> bool:
+        for info, done in zip(self.locals.get("infos", []), self.locals.get("dones", [])):
+            if done:
+                d = info.get("object_distance")
+                if d is not None:
+                    self.final_dist.append(d)
+                    self.success.append(float(d < self.reach_radius))
+        if self.success:
+            self.logger.record("rollout/success_rate", sum(self.success) / len(self.success))
+            self.logger.record("rollout/final_dist_mean", sum(self.final_dist) / len(self.final_dist))
+        return True
 
 WANDB_PROJECT = "ant_swarm"
 WANDB_ENTITY  = "kakooee"
 
 
-def _make_run_name() -> str:
-    """Timestamped run name: ``ant__YYYYMMDD_HHMM__<jobid>__train_ppo.py``."""
+def _make_run_name(n_ants: int) -> str:
+    """Run name: ``ant__YYYYMMDD_HHMM__<jobid>__train_ppo__<single|multi>``."""
     ts = datetime.now().strftime("%Y%m%d_%H%M")
     job_id = os.environ.get("SLURM_JOB_ID", "local")
-    return f"ant__{ts}__{job_id}__train_ppo.py"
+    mode = "single" if n_ants == 1 else "multi"
+    return f"ant__{ts}__{job_id}__train_ppo__{mode}"
 
 
 def _make_run_dir(run_name: str) -> Path:
@@ -124,110 +187,104 @@ def make_env(seed: int = 0):
     return _init
 
 
-def train(args):
-    run_name = _make_run_name()
+def train(cfg, s):
+    run_name = _make_run_name(int(cfg.ants.n))
     run_dir  = _make_run_dir(run_name)
     ckpt_dir = run_dir / "checkpoints"
     rend_dir = run_dir / "renders"
     tb_dir   = run_dir / "tb"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
+    save_code(run_dir, __file__)   # snapshot code + config for reproducibility
 
     print(f"Run name  : {run_name}", flush=True)
     print(f"Run dir   : {run_dir}", flush=True)
+    print(f"Exploration: ent_coef={s['ent_coef']} anneal->{s['ent_coef_final']} "
+          f"use_sde={s['use_sde']} log_std_init={s['log_std_init']}", flush=True)
 
     # --- wandb ---
     wandb_run = None
-    if args.wandb:
+    if s["wandb"]:
         import wandb
-        STORAGE_DIR.mkdir(parents=True, exist_ok=True)
         wandb_run = wandb.init(
-            project=WANDB_PROJECT,
-            entity=WANDB_ENTITY,
-            name=run_name,
-            dir=str(STORAGE_DIR),   # wandb/ folder lives under storage_local
-            group="ppo",
-            tags=["ppo", "ant_swarm"],
-            config={
-                "timesteps": args.timesteps,
-                "n_envs": args.n_envs,
-                "n_steps": args.n_steps,
-                "gamma": 0.999,
-                "ent_coef": 0.05,
-                "learning_rate": 3e-4,
-            },
-            sync_tensorboard=True,   # mirrors SB3's TB scalars into wandb
-            save_code=False,
+            project=WANDB_PROJECT, entity=WANDB_ENTITY, name=run_name,
+            dir=str(run_dir), group="ppo", tags=["ppo", "ant_swarm"],
+            config=s, sync_tensorboard=True, save_code=False,
         )
         print(f"W&B run   : {wandb_run.url}", flush=True)
 
-    vec_env = DummyVecEnv([make_env(i) for i in range(args.n_envs)])
-    vec_env = VecMonitor(vec_env)
-
-    eval_env = DummyVecEnv([make_env(seed=999)])
-    eval_env = VecMonitor(eval_env)
+    vec_env = VecMonitor(DummyVecEnv([make_env(i) for i in range(s["n_envs"])]))
+    eval_env = VecMonitor(DummyVecEnv([make_env(seed=999)]))
 
     model = PPO(
-        "MlpPolicy",
-        vec_env,
-        n_steps=args.n_steps,
-        batch_size=512,
-        n_epochs=10,
-        gamma=0.999,
-        gae_lambda=0.95,
-        clip_range=0.2,
-        ent_coef=0.05,
-        learning_rate=3e-4,
-        verbose=1,
-        tensorboard_log=str(tb_dir),
-        seed=0,
+        "MlpPolicy", vec_env,
+        n_steps=s["n_steps"], batch_size=s["batch_size"], n_epochs=s["n_epochs"],
+        gamma=s["gamma"], gae_lambda=s["gae_lambda"], clip_range=s["clip_range"],
+        ent_coef=s["ent_coef"], learning_rate=s["learning_rate"],
+        use_sde=s["use_sde"], sde_sample_freq=s["sde_sample_freq"],
+        policy_kwargs=dict(log_std_init=s["log_std_init"]),
+        verbose=1, tensorboard_log=str(tb_dir), seed=0,
     )
 
+    if s["init_from"]:   # warm-start weights from an existing checkpoint
+        model.set_parameters(s["init_from"])
+        print(f"Warm-started from: {s['init_from']}", flush=True)
+
+    reach = cfg.goal.reach_radius
     callbacks = [
-        CheckpointCallback(
-            save_freq=max(50_000 // args.n_envs, 1),
-            save_path=str(ckpt_dir),
-            name_prefix="ppo",
-        ),
-        EvalCallback(
-            eval_env,
-            best_model_save_path=str(ckpt_dir / "best"),
-            log_path=str(ckpt_dir / "eval_logs"),
-            eval_freq=max(20_000 // args.n_envs, 1),
-            n_eval_episodes=10,
-            deterministic=True,
-            verbose=1,
-        ),
-        RenderCallback(
-            render_freq=max(args.render_freq // args.n_envs, 1),
-            save_dir=rend_dir,
-            fps=30,
-            seed=0,
-        ),
+        CheckpointCallback(save_freq=max(50_000 // s["n_envs"], 1),
+                           save_path=str(ckpt_dir), name_prefix="ppo"),
+        EvalCallback(eval_env, best_model_save_path=str(ckpt_dir / "best"),
+                     log_path=str(ckpt_dir / "eval_logs"),
+                     eval_freq=max(20_000 // s["n_envs"], 1),
+                     n_eval_episodes=10, deterministic=True, verbose=1),
+        RenderCallback(render_freq=max(s["render_freq"] // s["n_envs"], 1),
+                       save_dir=rend_dir, fps=30, seed=0),
+        EpisodeMetricsCallback(reach_radius=reach),
+        SuccessTrajectoryCallback(save_dir=run_dir / "successes", reach_radius=reach),
     ]
 
-    if args.wandb:
-        from wandb.integration.sb3 import WandbCallback
-        callbacks.append(WandbCallback(
-            gradient_save_freq=0,   # skip gradient logging (slow)
-            verbose=0,
-        ))
+    # optional entropy-coefficient annealing
+    if s["ent_coef_final"] is not None:
+        callbacks.append(EntCoefAnneal(start=s["ent_coef"], final=s["ent_coef_final"],
+                                       total_timesteps=s["timesteps"]))
 
-    model.learn(total_timesteps=args.timesteps, callback=callbacks)
+    # optional gap-size curriculum (eval held at the hard target)
+    cur = getattr(cfg, "curriculum", None)
+    if cur is not None and getattr(cur, "enabled", False):
+        callbacks.append(CurriculumCallback(
+            start=cur.start_wall_len, target=cur.target_wall_len, step=cur.step,
+            success_threshold=cur.success_threshold, window=cur.window, reach_radius=reach,
+            max_steps_per_stage=getattr(cur, "max_steps_per_stage", None),
+            stop_on_master=getattr(cur, "stop_on_master", False),
+            stop_success=getattr(cur, "stop_success", 0.9),
+            stop_window=getattr(cur, "stop_window", 200),
+        ))
+        eval_env.env_method("set_wall_length", cur.target_wall_len)
+        print(f"Curriculum: wall_len {cur.start_wall_len} -> {cur.target_wall_len} "
+              f"(eval fixed at {cur.target_wall_len})", flush=True)
+
+    if s["wandb"]:
+        from wandb.integration.sb3 import WandbCallback
+        callbacks.append(WandbCallback(gradient_save_freq=0, verbose=0))
+
+    model.learn(total_timesteps=s["timesteps"], callback=callbacks)
 
     final_path = ckpt_dir / "ppo_final"
     model.save(str(final_path))
     print(f"Saved → {final_path}.zip", flush=True)
-
     if wandb_run is not None:
         wandb_run.finish()
 
 
-def evaluate(args):
+def evaluate(cfg, s):
+    if not s["eval_model"]:
+        raise SystemExit("Set run.eval_model in config.yaml to a checkpoint .zip")
     env = FlattenObservation(AntSwarmEnv(seed=42))
-    model = PPO.load(args.model, env=env)
+    model = PPO.load(s["eval_model"], env=env)
+    reach = cfg.goal.reach_radius
 
     returns, lengths, successes = [], [], []
-    for ep in range(args.eval_episodes):
+    for ep in range(s["eval_episodes"]):
         obs, _ = env.reset()
         total_r, done = 0.0, False
         while not done:
@@ -237,7 +294,7 @@ def evaluate(args):
             done = terminated or truncated
         returns.append(total_r)
         lengths.append(info["step"])
-        successes.append(info.get("object_distance", 1.0) < 0.05)
+        successes.append(info.get("object_distance", 1.0) < reach)
         print(f"  ep {ep+1:3d}  return={total_r:.2f}  steps={info['step']}  "
               f"dist={info.get('object_distance', float('nan')):.3f}")
 
@@ -247,26 +304,12 @@ def evaluate(args):
 
 
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--timesteps", type=int, default=50_000_000)
-    p.add_argument("--n-envs", type=int, default=8)
-    p.add_argument("--n-steps", type=int, default=4096,
-                   help="PPO rollout steps per env per update")
-    p.add_argument("--eval", action="store_true")
-    p.add_argument("--model", type=str, default=None)
-    p.add_argument("--eval-episodes", type=int, default=20)
-    p.add_argument("--render-freq", type=int, default=500_000,
-                   help="save a policy GIF every this many env steps")
-    p.add_argument("--no-wandb", dest="wandb", action="store_false",
-                   help="disable W&B logging (on by default)")
-    args = p.parse_args()
-
-    if args.eval:
-        if args.model is None:
-            p.error("--eval requires --model <path>")
-        evaluate(args)
+    cfg = load_config()
+    s = _settings(cfg)
+    if s["eval"]:
+        evaluate(cfg, s)
     else:
-        train(args)
+        train(cfg, s)
 
 
 if __name__ == "__main__":

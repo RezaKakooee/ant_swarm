@@ -14,7 +14,7 @@
 
 PROJECT_ROOT="/scicore/home/graber0001/kakooe0000/ant_swarm"
 
-PY_SCRIPT="train_sac.py"
+PY_SCRIPT="train_sac"
 
 
 run_job() {
@@ -45,7 +45,7 @@ run_job() {
     echo "GPU    : $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader)"
     echo ""
 
-    python3 -u "$PROJECT_ROOT/$PY_SCRIPT" 
+    python3 -u "$PROJECT_ROOT/$PY_SCRIPT".py 
 
     echo ""
     echo "End : $(date)"

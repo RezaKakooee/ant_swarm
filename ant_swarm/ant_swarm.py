@@ -66,7 +66,32 @@ class AntSwarmEnv(gym.Env):
             max_tries=int(self.cfg.spawn.max_tries),
         )
         self._prev_dist = 0.0
+        self._pending_wall_len = None       # curriculum: applied on next reset
         self.renderer = Renderer(self.cfg, self.layout)
+
+    # ------------------------------------------------------------------
+    # Curriculum hook
+    # ------------------------------------------------------------------
+    def set_wall_length(self, value):
+        """Schedule a new barrier wall length (curriculum); takes effect next reset."""
+        self._pending_wall_len = float(value)
+
+    def get_wall_length(self):
+        return self.layout.wall_len
+
+    def _apply_pending(self):
+        if self._pending_wall_len is None:
+            return
+        self.cfg.walls.length = self._pending_wall_len
+        self.layout = Layout(self.cfg)                                   # walls + heads + gap
+        self.obs_model = ObservationModel(self.cfg, self.layout, self.tshape)  # refresh wall_heads
+        self.state = SwarmState(self.cfg, self.layout, self.tshape, self.attachment_offsets)
+        self.renderer = Renderer(self.cfg, self.layout)
+        self.init_center, self.init_angle = sample_free_pose(
+            self.tshape, self.layout, self.rng,
+            x_range=self.cfg.spawn.x_range, angle_range=self.cfg.spawn.angle_range,
+            margin=self.cfg.spawn.margin, max_tries=int(self.cfg.spawn.max_tries))
+        self._pending_wall_len = None
 
     # ------------------------------------------------------------------
     # Gym interface
@@ -75,6 +100,7 @@ class AntSwarmEnv(gym.Env):
         super().reset(seed=seed)
         if seed is not None:
             self.rng = np.random.default_rng(seed)
+        self._apply_pending()
         self.state.reset(self.init_center, self.init_angle)
         self._prev_dist = self.state.distance_to_goal()
         return self.obs_model.observe(self.state), {}
@@ -82,8 +108,13 @@ class AntSwarmEnv(gym.Env):
     def step(self, actions):
         self.state.step_count += 1
 
-        force, torque = self.action_model.to_wrench(actions, self.state)
-        self.state.integrate(force, torque)
+        if self.action_model.mode == "kinematic":
+            direction, rotation = self.action_model.decode_kinematic(actions)
+            self.state.apply_kinematic(direction, rotation,
+                                       self.action_model.step_len, self.action_model.rot_step)
+        else:
+            force, torque = self.action_model.to_wrench(actions, self.state)
+            self.state.integrate(force, torque)
 
         dist = self.state.distance_to_goal()
         reward, reached = self.reward_model.compute(dist, self._prev_dist, self.layout.reach_radius)
@@ -96,6 +127,8 @@ class AntSwarmEnv(gym.Env):
             "object_angle": self.state.object_angle,
             "object_distance": dist,
             "step": self.state.step_count,
+            "wall_len": self.layout.wall_len,   # current difficulty (curriculum)
+            "gap": self.layout.gap,
         }
         return self.obs_model.observe(self.state), reward, terminated, truncated, info
 

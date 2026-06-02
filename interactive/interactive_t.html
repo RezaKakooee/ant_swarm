@@ -10,226 +10,268 @@
   canvas.grabbing { cursor: grabbing; }
   #hud { margin: 10px 0; font-size: 14px; line-height: 1.7; }
   #hud b { color: #fff; }
-  .ok { color: #4caf50; } .bad { color: #ef5350; }
-  #controls { font-size: 13px; color: #aaa; max-width: 720px; text-align: center; }
-  label { margin: 0 8px; cursor: pointer; }
+  .ok { color: #4caf50; } .bad { color: #ef5350; } .warn { color: #ffb300; }
+  #controls { font-size: 13px; color: #aaa; max-width: 820px; text-align: center; }
   kbd { background:#333; border:1px solid #555; border-radius:3px; padding:1px 5px; }
+  #panel { display:grid; grid-template-columns:1fr 1fr; gap:4px 24px; max-width:820px;
+           margin:12px 0; font-size:13px; }
+  .row { display:flex; align-items:center; gap:8px; }
+  .row label { width:120px; text-align:right; color:#bbb; }
+  .row input[type=range] { flex:1; }
+  .row .val { width:54px; color:#fff; text-align:right; }
+  #export { width:820px; }
+  textarea { width:100%; height:150px; background:#111; color:#9fdf9f; border:1px solid #444;
+             font-family:monospace; font-size:12px; }
+  button { background:#2d2d2d; color:#ddd; border:1px solid #555; border-radius:4px;
+           padding:5px 12px; cursor:pointer; margin:4px; }
+  button:hover { background:#3a3a3a; }
 </style>
 </head>
 <body>
 <div id="wrap">
   <canvas id="cv" width="800" height="461"></canvas>
-  <div style="font-size:12px;color:#888;margin-top:4px;">geometry loaded from <code>config.yaml</code> → <code>web_config.js</code></div>
   <div id="hud">
     angle: <b id="ang">0°</b> &nbsp;|&nbsp;
+    gap: <b id="gap">—</b> &nbsp;|&nbsp;
+    straight-push: <b id="straight">—</b> &nbsp;|&nbsp;
     collision: <b id="col">—</b> &nbsp;|&nbsp;
     status: <b id="status">—</b>
   </div>
   <div id="controls">
-    <b>Left-drag</b> to move. &nbsp; <b>Right-drag</b> to rotate. &nbsp; <kbd>R</kbd> reset.<br>
-    <label style="display:inline-block;margin:8px 0;">
-      angle <input type="range" id="angSlider" min="-180" max="180" value="0" step="1" style="width:300px;vertical-align:middle;">
-    </label><br>
-    <label><input type="checkbox" id="trueCol" checked> true collision (oriented rect)</label>
-    <label><input type="checkbox" id="aabbCol"> show env's conservative AABB collision</label>
+    <b>Left-drag</b> move &nbsp; <b>Right-drag</b> rotate &nbsp; <kbd>R</kbd> reset &nbsp;|&nbsp;
+    <label><input type="checkbox" id="trueCol" checked> true collision</label>
+    <label><input type="checkbox" id="aabbCol"> env AABB collision</label>
+  </div>
+
+  <!-- geometry editor -->
+  <div id="panel">
+    <div class="row"><label>stem length</label><input type="range" id="sl_stem"  min="0.08" max="0.40" step="0.005"><span class="val" id="v_stem"></span></div>
+    <div class="row"><label>wall length</label><input type="range" id="sl_wlen"  min="0.10" max="0.345" step="0.005"><span class="val" id="v_wlen"></span></div>
+    <div class="row"><label>big cap</label>    <input type="range" id="sl_capb"  min="0.04" max="0.34" step="0.005"><span class="val" id="v_capb"></span></div>
+    <div class="row"><label>wall spacing</label><input type="range" id="sl_wspc" min="0.06" max="0.45" step="0.005"><span class="val" id="v_wspc"></span></div>
+    <div class="row"><label>small cap</label>  <input type="range" id="sl_caps"  min="0.03" max="0.30" step="0.005"><span class="val" id="v_caps"></span></div>
+    <div class="row"><label>goal x</label>     <input type="range" id="sl_goalx" min="0.60" max="1.20" step="0.01"><span class="val" id="v_goalx"></span></div>
+    <div class="row"><label>thickness</label>  <input type="range" id="sl_th"    min="0.01" max="0.05" step="0.002"><span class="val" id="v_th"></span></div>
+    <div class="row"><label>reach radius</label><input type="range" id="sl_reach" min="0.02" max="0.10" step="0.005"><span class="val" id="v_reach"></span></div>
+  </div>
+
+  <!-- export -->
+  <div id="export">
+    <div style="text-align:center">
+      <button id="btn_copy">Copy YAML</button>
+      <button id="btn_dl">Download config_patch.yaml</button>
+      <button id="btn_reset">Reset to config.yaml</button>
+    </div>
+    <textarea id="yaml" readonly></textarea>
   </div>
 </div>
+
 <!-- single source of truth: generated from config.yaml -->
 <script src="web_config.js"></script>
 <script>
-// ---- Geometry derived from CONFIG (config.yaml) ----
 const S = CONFIG.scene_scale;
 const W = CONFIG.world.width * S, H = CONFIG.world.height * S;
-const TH = CONFIG.tshape.thickness * S, HT = TH/2;
-const STEM = CONFIG.tshape.stem_len * S;
-const CAPB = CONFIG.tshape.cap_big_len * S, CAPS = CONFIG.tshape.cap_small_len * S;
-// sub-rects: [local_cx, local_cy, half_x, half_y]
-const RECTS = [
-  [0.0,      0.0, STEM/2, HT],     // stem
-  [-STEM/2,  0.0, HT,     CAPB/2], // big cap
-  [ STEM/2,  0.0, HT,     CAPS/2], // small cap
-];
-const WALL_LEN = CONFIG.walls.length * S, HL = WALL_LEN/2;
-const WALL_HT = (CONFIG.walls.thickness * S)/2;
-const WALL_X = CONFIG.walls.x_columns.map(x => x*S);
-// collision walls: upper segment centred at H-HL, lower at HL
-const WALLS = []; // {cx,cy,hx,hy}
-for (const wx of WALL_X) {
-  WALLS.push({cx: wx, cy: H - HL, hx: WALL_HT, hy: HL}); // upper
-  WALLS.push({cx: wx, cy: HL,     hx: WALL_HT, hy: HL}); // lower
+
+// ---- editable geometry (unscaled config units) ----
+function defaults() {
+  const xc = CONFIG.walls.x_columns;
+  return {
+    stem:  CONFIG.tshape.stem_len,
+    capB:  CONFIG.tshape.cap_big_len,
+    capS:  CONFIG.tshape.cap_small_len,
+    th:    CONFIG.tshape.thickness,
+    wlen:  CONFIG.walls.length,
+    wmid:  (xc[0] + xc[1]) / 2,        // midpoint kept fixed
+    wspc:  Math.abs(xc[1] - xc[0]),    // spacing between columns
+    goalx: CONFIG.goal.pos[0],
+    reach: CONFIG.goal.reach_radius,
+  };
 }
-const GOAL = CONFIG.goal.pos.map(v => v*S);
-const GOAL_R = CONFIG.goal.reach_radius * S;
-// start pose: centre of the spawn x-band, mid-height
-const SPAWN = [ (CONFIG.spawn.x_range[0]+CONFIG.spawn.x_range[1])/2 * S, H/2 ];
+let G = defaults();
+
+// ---- derived geometry (recomputed on every edit) ----
+let TH, HT, STEM, CAPB, CAPS, RECTS, WALL_LEN, HL, WALL_HT, WALL_X, WALLS, GOAL, GOAL_R, SPAWN;
+function rebuild() {
+  TH = G.th * S; HT = TH / 2;
+  STEM = G.stem * S; CAPB = G.capB * S; CAPS = G.capS * S;
+  RECTS = [
+    [0.0,      0.0, STEM/2, HT],     // stem
+    [-STEM/2,  0.0, HT,     CAPB/2], // big cap
+    [ STEM/2,  0.0, HT,     CAPS/2], // small cap
+  ];
+  WALL_LEN = G.wlen * S; HL = WALL_LEN/2; WALL_HT = (G.th * S)/2;
+  const x0 = (G.wmid - G.wspc/2), x1 = (G.wmid + G.wspc/2);
+  WALL_X = [x0*S, x1*S];
+  WALLS = [];
+  for (const wx of WALL_X) {
+    WALLS.push({cx: wx, cy: H - HL, hx: WALL_HT, hy: HL});
+    WALLS.push({cx: wx, cy: HL,     hx: WALL_HT, hy: HL});
+  }
+  GOAL = [G.goalx * S, CONFIG.goal.pos[1] * S];
+  GOAL_R = G.reach * S;
+  SPAWN = [(CONFIG.spawn.x_range[0]+CONFIG.spawn.x_range[1])/2 * S, H/2];
+}
 
 const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
-cv.height = Math.round(cv.width * H / W);   // keep aspect from config
+cv.height = Math.round(cv.width * H / W);
 const SCALE = cv.width / W;
-// world -> px
 const px = (x) => x * SCALE;
 const py = (y) => (H - y) * SCALE;
 
-let T = { x: SPAWN[0], y: SPAWN[1], a: 0.0 };
-let dragging = false, grabDX = 0, grabDY = 0;     // left-drag move
-let rotating = false, rotStartMouse = 0, rotStartAngle = 0; // right-drag rotate
+let T = { x: 0, y: 0, a: 0.0 };
+let dragging=false, grabDX=0, grabDY=0, rotating=false, rotStartMouse=0, rotStartAngle=0;
 
-// ---- geometry helpers ----
-function rectCorners(rc, T) {  // world corners of a sub-rect at pose T
-  const [lcx, lcy, hx, hy] = rc;
-  const c = Math.cos(T.a), s = Math.sin(T.a);
-  const pts = [[ -hx,-hy],[hx,-hy],[hx,hy],[-hx,hy]];
-  return pts.map(([dx,dy]) => {
-    const lx = lcx+dx, ly = lcy+dy;
-    return [T.x + c*lx - s*ly, T.y + s*lx + c*ly];
+// ---- collision helpers ----
+function rectCorners(rc, T){
+  const [lcx,lcy,hx,hy]=rc, c=Math.cos(T.a), s=Math.sin(T.a);
+  return [[-hx,-hy],[hx,-hy],[hx,hy],[-hx,hy]].map(([dx,dy])=>{
+    const lx=lcx+dx, ly=lcy+dy; return [T.x+c*lx-s*ly, T.y+s*lx+c*ly];
   });
 }
-function aabbOf(corners) {
-  let xmn=1e9,xmx=-1e9,ymn=1e9,ymx=-1e9;
-  for (const [x,y] of corners){ xmn=Math.min(xmn,x);xmx=Math.max(xmx,x);ymn=Math.min(ymn,y);ymx=Math.max(ymx,y);}
-  return [xmn,xmx,ymn,ymx];
-}
-function project(corners, ax, ay){ // min/max projection on axis (ax,ay)
-  let mn=1e9, mx=-1e9;
-  for (const [x,y] of corners){ const p=x*ax+y*ay; mn=Math.min(mn,p); mx=Math.max(mx,p);}
-  return [mn,mx];
-}
-function overlapSAT(cA, cB){ // OBB vs OBB via SAT
-  // axes: edge normals of both boxes (use first two edges of each)
-  const axes = [];
-  for (const c of [cA, cB]){
-    for (let i=0;i<2;i++){
-      const ax = c[i+1][0]-c[i][0], ay = c[i+1][1]-c[i][1];
-      const len = Math.hypot(ax,ay) || 1;
-      axes.push([-ay/len, ax/len]);
-    }
-  }
-  for (const [ax,ay] of axes){
-    const [amn,amx]=project(cA,ax,ay), [bmn,bmx]=project(cB,ax,ay);
-    if (amx < bmn || bmx < amn) return false; // separating axis
-  }
+function aabbOf(c){let a=1e9,b=-1e9,d=1e9,e=-1e9;for(const[x,y]of c){a=Math.min(a,x);b=Math.max(b,x);d=Math.min(d,y);e=Math.max(e,y);}return[a,b,d,e];}
+function project(c,ax,ay){let m=1e9,M=-1e9;for(const[x,y]of c){const p=x*ax+y*ay;m=Math.min(m,p);M=Math.max(M,p);}return[m,M];}
+function overlapSAT(cA,cB){
+  const axes=[];
+  for(const c of [cA,cB]) for(let i=0;i<2;i++){const ax=c[i+1][0]-c[i][0],ay=c[i+1][1]-c[i][1],l=Math.hypot(ax,ay)||1;axes.push([-ay/l,ax/l]);}
+  for(const[ax,ay]of axes){const[a,b]=project(cA,ax,ay),[c,d]=project(cB,ax,ay);if(b<c||d<a)return false;}
   return true;
 }
-function wallCorners(w){
-  return [[w.cx-w.hx,w.cy-w.hy],[w.cx+w.hx,w.cy-w.hy],[w.cx+w.hx,w.cy+w.hy],[w.cx-w.hx,w.cy+w.hy]];
-}
-
-// True collision: oriented sub-rects vs wall AABBs + world bounds
+function wallCorners(w){return[[w.cx-w.hx,w.cy-w.hy],[w.cx+w.hx,w.cy-w.hy],[w.cx+w.hx,w.cy+w.hy],[w.cx-w.hx,w.cy+w.hy]];}
 function trueCollision(T){
-  for (const rc of RECTS){
-    const corners = rectCorners(rc, T);
-    const [xmn,xmx,ymn,ymx] = aabbOf(corners);
-    if (xmn<0||xmx>W||ymn<0||ymx>H) return true; // world bound
-    for (const w of WALLS){
-      if (overlapSAT(corners, wallCorners(w))) return true;
-    }
-  }
+  for(const rc of RECTS){const c=rectCorners(rc,T);const[a,b,d,e]=aabbOf(c);if(a<0||b>W||d<0||e>H)return true;for(const w of WALLS)if(overlapSAT(c,wallCorners(w)))return true;}
   return false;
 }
-// Env's conservative collision: AABB of each rotated sub-rect vs wall AABB
 function aabbCollision(T){
-  for (const rc of RECTS){
-    const [xmn,xmx,ymn,ymx] = aabbOf(rectCorners(rc, T));
-    if (xmn<0||xmx>W||ymn<0||ymx>H) return true;
-    for (const w of WALLS){
-      const wx0=w.cx-w.hx, wx1=w.cx+w.hx, wy0=w.cy-w.hy, wy1=w.cy+w.hy;
-      if (xmn<wx1 && xmx>wx0 && ymn<wy1 && ymx>wy0) return true;
-    }
-  }
+  for(const rc of RECTS){const[a,b,d,e]=aabbOf(rectCorners(rc,T));if(a<0||b>W||d<0||e>H)return true;
+    for(const w of WALLS){const wx0=w.cx-w.hx,wx1=w.cx+w.hx,wy0=w.cy-w.hy,wy1=w.cy+w.hy;if(a<wx1&&b>wx0&&d<wy1&&e>wy0)return true;}}
   return false;
 }
 
 // ---- rendering ----
 function draw(){
   ctx.clearRect(0,0,cv.width,cv.height);
-  // walls (draw to world edges, matching the Python render look)
-  // lower wall spans y in [0, 2*HL]; upper wall spans y in [H-2*HL, H]
-  ctx.fillStyle = '#5f6066';
-  const gapLo = 2*HL, gapHi = H - 2*HL;   // lower wall top / upper wall bottom
-  for (const wx of WALL_X){
-    ctx.fillRect(px(wx-WALL_HT), py(H),     2*WALL_HT*SCALE, (H-gapHi)*SCALE); // upper col
-    ctx.fillRect(px(wx-WALL_HT), py(gapLo), 2*WALL_HT*SCALE, gapLo*SCALE);     // lower col
+  ctx.fillStyle='#5f6066';
+  const gapHi=H-2*HL;
+  for(const wx of WALL_X){
+    ctx.fillRect(px(wx-WALL_HT), py(H),      2*WALL_HT*SCALE, (H-gapHi)*SCALE);
+    ctx.fillRect(px(wx-WALL_HT), py(2*HL),   2*WALL_HT*SCALE, (2*HL)*SCALE);
   }
-  // goal
-  ctx.fillStyle = '#2e8b2e';
+  ctx.fillStyle='#2e8b2e';
   ctx.fillRect(px(GOAL[0])-5, py(GOAL[1])-5, 10, 10);
 
-  const showTrue = document.getElementById('trueCol').checked;
-  const showAabb = document.getElementById('aabbCol').checked;
-  const colT = trueCollision(T);
-  const colA = aabbCollision(T);
-
-  // conservative AABB overlay
-  if (showAabb){
-    ctx.strokeStyle = colA ? 'rgba(239,83,80,0.9)' : 'rgba(255,193,7,0.7)';
-    ctx.lineWidth = 1.5;
-    for (const rc of RECTS){
-      const [xmn,xmx,ymn,ymx] = aabbOf(rectCorners(rc, T));
-      ctx.strokeRect(px(xmn), py(ymx), (xmx-xmn)*SCALE, (ymx-ymn)*SCALE);
-    }
+  const showTrue=document.getElementById('trueCol').checked;
+  const showAabb=document.getElementById('aabbCol').checked;
+  const colT=trueCollision(T), colA=aabbCollision(T);
+  if(showAabb){
+    ctx.strokeStyle=colA?'rgba(239,83,80,0.9)':'rgba(255,193,7,0.7)'; ctx.lineWidth=1.5;
+    for(const rc of RECTS){const[a,b,d,e]=aabbOf(rectCorners(rc,T));ctx.strokeRect(px(a),py(e),(b-a)*SCALE,(e-d)*SCALE);}
   }
-  // T-shape (oriented)
-  const collided = (showTrue && colT) || (showAabb && colA && !showTrue);
-  ctx.fillStyle = collided ? '#b71c1c' : '#c0392b';
-  for (const rc of RECTS){
-    const c = rectCorners(rc, T);
-    ctx.beginPath();
-    ctx.moveTo(px(c[0][0]), py(c[0][1]));
-    for (let i=1;i<4;i++) ctx.lineTo(px(c[i][0]), py(c[i][1]));
-    ctx.closePath(); ctx.fill();
-  }
-  // junction dots (the two ant anchor points)
-  ctx.fillStyle = '#fff';
-  for (const off of [[-STEM/2,0],[STEM/2,0]]){
-    const c=Math.cos(T.a),s=Math.sin(T.a);
-    const wx=T.x+c*off[0]-s*off[1], wy=T.y+s*off[0]+c*off[1];
-    ctx.beginPath(); ctx.arc(px(wx),py(wy),6,0,7); ctx.fill();
-  }
+  const collided=(showTrue&&colT)||(showAabb&&colA&&!showTrue);
+  ctx.fillStyle=collided?'#b71c1c':'#c0392b';
+  for(const rc of RECTS){const c=rectCorners(rc,T);ctx.beginPath();ctx.moveTo(px(c[0][0]),py(c[0][1]));for(let i=1;i<4;i++)ctx.lineTo(px(c[i][0]),py(c[i][1]));ctx.closePath();ctx.fill();}
+  ctx.fillStyle='#fff';
+  for(const off of [[-STEM/2,0],[STEM/2,0]]){const c=Math.cos(T.a),s=Math.sin(T.a);const wx=T.x+c*off[0]-s*off[1],wy=T.y+s*off[0]+c*off[1];ctx.beginPath();ctx.arc(px(wx),py(wy),6,0,7);ctx.fill();}
 
   // HUD
-  document.getElementById('ang').textContent = (T.a*180/Math.PI).toFixed(0)+'°';
-  document.getElementById('angSlider').value = Math.round(T.a*180/Math.PI);
-  const colEl = document.getElementById('col');
-  colEl.textContent = 'true='+(colT?'YES':'no')+'  aabb='+(colA?'YES':'no');
-  colEl.className = colT ? 'bad' : 'ok';
-  const reached = Math.hypot(T.x-GOAL[0], T.y-GOAL[1]) < GOAL_R;
-  const past = T.x > WALL_X[1] + 0.05;
-  const st = document.getElementById('status');
-  if (reached){ st.textContent='REACHED GOAL!'; st.className='ok'; }
-  else if (past){ st.textContent='through the barrier ✓'; st.className='ok'; }
-  else { st.textContent='left of barrier'; st.className=''; }
+  document.getElementById('ang').textContent=(T.a*180/Math.PI).toFixed(0)+'°';
+  const gap=H-2*WALL_LEN;
+  document.getElementById('gap').textContent=gap.toFixed(3);
+  const straightEl=document.getElementById('straight');
+  if(gap < CAPB){ straightEl.textContent='BLOCKED'; straightEl.className='ok'; }
+  else { straightEl.textContent='possible'; straightEl.className='warn'; }
+  const colEl=document.getElementById('col');
+  colEl.textContent='true='+(colT?'YES':'no')+' aabb='+(colA?'YES':'no');
+  colEl.className=colT?'bad':'ok';
+  const reached=Math.hypot(T.x-GOAL[0],T.y-GOAL[1])<GOAL_R;
+  const past=T.x>WALL_X[1]+0.05;
+  const st=document.getElementById('status');
+  if(reached){st.textContent='REACHED GOAL!';st.className='ok';}
+  else if(past){st.textContent='through ✓';st.className='ok';}
+  else{st.textContent='left of barrier';st.className='';}
 }
 
-// ---- input ----
-function mouseWorld(e){
-  const r = cv.getBoundingClientRect();
-  const mx = (e.clientX - r.left) * (cv.width / r.width);
-  const my = (e.clientY - r.top)  * (cv.height / r.height);
-  return [mx/SCALE, H - my/SCALE];
+// ---- YAML export ----
+function exportYaml(){
+  const x0=(G.wmid-G.wspc/2), x1=(G.wmid+G.wspc/2);
+  const r=(v,n=3)=>Number(v).toFixed(n);
+  return `# paste these into config.yaml (geometry edited in the sandbox)
+walls:
+  x_columns: [${r(x0)}, ${r(x1)}]   # spacing ${r(G.wspc)}
+  length: ${r(G.wlen)}              # gap ${r(H/S - 2*G.wlen)}
+
+tshape:
+  stem_len: ${r(G.stem)}
+  cap_big_len: ${r(G.capB)}
+  cap_small_len: ${r(G.capS)}
+  thickness: ${r(G.th)}
+
+goal:
+  pos: [${r(G.goalx)}, ${r(CONFIG.goal.pos[1])}]
+  reach_radius: ${r(G.reach)}
+`;
 }
-function angleToMouse(e){ const [wx,wy]=mouseWorld(e); return Math.atan2(wy-T.y, wx-T.x); }
-cv.addEventListener('contextmenu', e=>e.preventDefault()); // allow right-drag
-cv.addEventListener('mousedown', e=>{
-  if (e.button === 2){            // right button → rotate
-    rotating=true; rotStartMouse=angleToMouse(e); rotStartAngle=T.a;
-  } else {                        // left button → move
-    const [wx,wy]=mouseWorld(e); dragging=true; grabDX=T.x-wx; grabDY=T.y-wy;
-    cv.classList.add('grabbing');
+function refreshYaml(){ document.getElementById('yaml').value = exportYaml(); }
+
+// ---- slider wiring ----
+const SLIDERS = {
+  sl_stem:'stem', sl_capb:'capB', sl_caps:'capS', sl_th:'th',
+  sl_wlen:'wlen', sl_wspc:'wspc', sl_goalx:'goalx', sl_reach:'reach',
+};
+const VALSPAN = {
+  sl_stem:'v_stem', sl_capb:'v_capb', sl_caps:'v_caps', sl_th:'v_th',
+  sl_wlen:'v_wlen', sl_wspc:'v_wspc', sl_goalx:'v_goalx', sl_reach:'v_reach',
+};
+function syncSlidersFromG(){
+  for(const [id,key] of Object.entries(SLIDERS)){
+    document.getElementById(id).value = G[key];
+    document.getElementById(VALSPAN[id]).textContent = Number(G[key]).toFixed(3);
   }
+}
+function onSlider(id){
+  G[SLIDERS[id]] = parseFloat(document.getElementById(id).value);
+  document.getElementById(VALSPAN[id]).textContent = G[SLIDERS[id]].toFixed(3);
+  rebuild(); refreshYaml(); draw();
+}
+for(const id of Object.keys(SLIDERS)){
+  document.getElementById(id).addEventListener('input', ()=>onSlider(id));
+}
+
+// ---- export buttons ----
+document.getElementById('btn_copy').addEventListener('click', ()=>{
+  navigator.clipboard.writeText(exportYaml()).then(()=>{
+    const b=document.getElementById('btn_copy'); const t=b.textContent; b.textContent='Copied!'; setTimeout(()=>b.textContent=t,1200);
+  });
+});
+document.getElementById('btn_dl').addEventListener('click', ()=>{
+  const blob=new Blob([exportYaml()],{type:'text/yaml'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='config_patch.yaml'; a.click();
+});
+document.getElementById('btn_reset').addEventListener('click', ()=>{
+  G=defaults(); syncSlidersFromG(); rebuild(); resetPose(); refreshYaml(); draw();
+});
+
+// ---- mouse / keyboard ----
+function mouseWorld(e){const r=cv.getBoundingClientRect();const mx=(e.clientX-r.left)*(cv.width/r.width),my=(e.clientY-r.top)*(cv.height/r.height);return[mx/SCALE,H-my/SCALE];}
+function angleToMouse(e){const[wx,wy]=mouseWorld(e);return Math.atan2(wy-T.y,wx-T.x);}
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+cv.addEventListener('mousedown',e=>{
+  if(e.button===2){rotating=true;rotStartMouse=angleToMouse(e);rotStartAngle=T.a;}
+  else{const[wx,wy]=mouseWorld(e);dragging=true;grabDX=T.x-wx;grabDY=T.y-wy;cv.classList.add('grabbing');}
   e.preventDefault();
 });
-window.addEventListener('mouseup', ()=>{ dragging=false; rotating=false; cv.classList.remove('grabbing'); });
-window.addEventListener('mousemove', e=>{
-  if(dragging){ const [wx,wy]=mouseWorld(e); T.x=wx+grabDX; T.y=wy+grabDY; draw(); }
-  else if(rotating){ T.a = rotStartAngle + (angleToMouse(e) - rotStartMouse); draw(); }
+window.addEventListener('mouseup',()=>{dragging=false;rotating=false;cv.classList.remove('grabbing');});
+window.addEventListener('mousemove',e=>{
+  if(dragging){const[wx,wy]=mouseWorld(e);T.x=wx+grabDX;T.y=wy+grabDY;draw();}
+  else if(rotating){T.a=rotStartAngle+(angleToMouse(e)-rotStartMouse);draw();}
 });
-document.getElementById('angSlider').addEventListener('input', e=>{
-  T.a = (+e.target.value) * Math.PI/180; draw();
-});
-window.addEventListener('keydown', e=>{
-  if(e.key.toLowerCase()==='r'){ T={x:SPAWN[0],y:SPAWN[1],a:0}; draw(); }
-});
-['trueCol','aabbCol'].forEach(id=>document.getElementById(id).addEventListener('change',draw));
+function resetPose(){ T={x:SPAWN[0],y:SPAWN[1],a:0}; }
+window.addEventListener('keydown',e=>{ if(e.key.toLowerCase()==='r'){resetPose();draw();} });
+
+// ---- init ----
+syncSlidersFromG();
+rebuild();
+resetPose();
+refreshYaml();
 draw();
 </script>
 </body>

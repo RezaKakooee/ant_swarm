@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -22,15 +23,18 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
-from ant_swarm import AntSwarmEnv  # noqa: E402
+from ant_swarm import AntSwarmEnv, save_code  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).parent
 STORAGE_DIR = PROJECT_ROOT / "storage_local"
 
 
-def _make_run_dir() -> Path:
-    """Timestamped run dir under storage_local, mirroring train_ppo ('rnd' tag)."""
-    name = datetime.now().strftime("%Y_%m_%d_%H%M") + "__ant__rnd"
+def _make_run_dir(n_ants: int) -> Path:
+    """Run dir under storage_local: ``ant__YYYYMMDD_HHMM__<jobid>__rnd__<single|multi>``."""
+    ts = datetime.now().strftime("%Y%m%d_%H%M")
+    job_id = os.environ.get("SLURM_JOB_ID", "local")
+    mode = "single" if n_ants == 1 else "multi"
+    name = f"ant__{ts}__{job_id}__rnd__{mode}"
     run_dir = STORAGE_DIR / name
     (run_dir / "renders").mkdir(parents=True, exist_ok=True)
     return run_dir
@@ -82,7 +86,9 @@ def main():
 
     env = AntSwarmEnv(seed=args.seed)
 
-    run_dir = _make_run_dir() if args.gif else None
+    run_dir = _make_run_dir(env.n_ants) if args.gif else None
+    if run_dir is not None:
+        save_code(run_dir, __file__)   # snapshot code + config for reproducibility
     if run_dir is not None:
         print(f"Run dir : {run_dir}")
 
