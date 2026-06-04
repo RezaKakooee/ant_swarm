@@ -91,6 +91,19 @@ class TShape:
     def world_corners(self):
         return self.center[None, :] + self.local_corners() @ self.rot().T
 
+    # -- goal-tracking reference point (local frame) -------------------
+    def track_local_point(self, which: str = "center") -> np.ndarray:
+        """Local-frame point used for goal distance/reward.
+
+        ``big_cap`` → centre of the big cap (``-stem/2, 0``); ``small_cap`` →
+        ``+stem/2, 0``; anything else → the T centre (origin).
+        """
+        if which == "big_cap":
+            return np.array([-self.stem_len / 2, 0.0], dtype=np.float32)
+        if which == "small_cap":
+            return np.array([self.stem_len / 2, 0.0], dtype=np.float32)
+        return np.zeros(2, dtype=np.float32)
+
     # -- collision -----------------------------------------------------
     def overlaps_walls(self, layout) -> bool:
         """True oriented-rectangle collision against the layout's wall AABBs."""

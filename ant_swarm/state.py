@@ -29,6 +29,10 @@ class SwarmState:
         self.rest_wall = ph.restitution_wall
         self.rest_bound = ph.restitution_bound
 
+        # goal-tracking reference point (which T point must reach the goal)
+        self._track_local = tshape_template.track_local_point(
+            getattr(cfg.env, "goal_track", "center"))
+
         self.obj = None          # posed TShape for the current episode
         self.ants = None         # (n_ants, 2) world positions
         self.step_count = 0
@@ -58,8 +62,12 @@ class SwarmState:
     def object_angle(self):
         return self.obj.angle
 
+    def tracked_world(self):
+        """World position of the goal-tracking point (e.g. big-cap centre)."""
+        return self.obj.local_to_world(self._track_local)
+
     def distance_to_goal(self) -> float:
-        return float(np.linalg.norm(self.obj.center - self.layout.goal))
+        return float(np.linalg.norm(self.tracked_world() - self.layout.goal))
 
     # ------------------------------------------------------------------
     def _bad_pose(self) -> bool:

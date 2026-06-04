@@ -66,7 +66,9 @@ class AntSwarmEnv(gym.Env):
             max_tries=int(self.cfg.spawn.max_tries),
         )
         self._prev_dist = 0.0
-        self._pending_wall_len = None       # curriculum: applied on next reset
+        self._pending_wall_len = None       # gap curriculum: applied on next reset
+        self._spawn_x_override = None       # reverse curriculum: spawn x-band
+        self._resample_each_reset = False   # reverse curriculum: fresh pose each episode
         self.renderer = Renderer(self.cfg, self.layout)
 
     # ------------------------------------------------------------------
@@ -79,7 +81,29 @@ class AntSwarmEnv(gym.Env):
     def get_wall_length(self):
         return self.layout.wall_len
 
+    def set_spawn_x_range(self, lo, hi):
+        """Reverse curriculum: spawn the T in x-band [lo, hi] (config units),
+        resampling a fresh pose each episode. Takes effect on next reset."""
+        self._spawn_x_override = (float(lo), float(hi))
+        self._resample_each_reset = True
+
+    def _sample_spawn(self):
+        x_range = self._spawn_x_override or self.cfg.spawn.x_range
+        return sample_free_pose(
+            self.tshape, self.layout, self.rng,
+            x_range=x_range, angle_range=self.cfg.spawn.angle_range,
+            margin=self.cfg.spawn.margin, max_tries=int(self.cfg.spawn.max_tries))
+
     def _apply_pending(self):
+        if self._pending_wall_len is None:
+            return
+        self.cfg.walls.length = self._pending_wall_len
+        self.layout = Layout(self.cfg)                                   # walls + heads + gap
+        self.obs_model = ObservationModel(self.cfg, self.layout, self.tshape)  # refresh wall_heads
+        self.state = SwarmState(self.cfg, self.layout, self.tshape, self.attachment_offsets)
+        self.renderer = Renderer(self.cfg, self.layout)
+        self.init_center, self.init_angle = self._sample_spawn()
+        self._pending_wall_len = None
         if self._pending_wall_len is None:
             return
         self.cfg.walls.length = self._pending_wall_len
@@ -101,6 +125,8 @@ class AntSwarmEnv(gym.Env):
         if seed is not None:
             self.rng = np.random.default_rng(seed)
         self._apply_pending()
+        if self._resample_each_reset:                  # reverse curriculum: fresh start each episode
+            self.init_center, self.init_angle = self._sample_spawn()
         self.state.reset(self.init_center, self.init_angle)
         self._prev_dist = self.state.distance_to_goal()
         return self.obs_model.observe(self.state), {}

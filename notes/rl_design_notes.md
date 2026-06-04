@@ -167,6 +167,31 @@ to ~2× their median `length` (now recorded — see below).
 
 ---
 
+## Goal-tracking point — the "small-cap cheat" fix (IMPLEMENTED 2026-06-02)
+
+**Problem observed:** with distance measured from the T *centre*, and an asymmetric
+T (big cap 0.18, small cap 0.09) + a two-column barrier, the agent learned a cheat:
+lead with the **small cap** (always fits any gap), poke it through hole 1, rotate in
+the corridor, poke through hole 2 — never actually threading the big cap. Worse, the
+gap-curriculum spends 7 of 9 levels in the "gap ≥ big cap" regime where *no* threading
+is needed at all, so the hard skill is only required in the last 1–2 stages and the
+learned strategy doesn't transfer.
+
+**Fix:** measure goal distance from the **big-cap centre** instead of the T centre.
+Config `env.goal_track: big_cap | center | small_cap` (default `big_cap`).
+
+- Reward shaping, success/termination, `info["object_distance"]`, and the observation's
+  `goal_dx,goal_dy` **all** use the tracked point (kept consistent).
+- To get the big-cap centre to the goal the agent must **lead with the big (hard) end**
+  (orient ~180°); verified geometrically reachable (small cap trails inside the world).
+  The small-cap-first strategy now earns no progress and scores no success → cheat gone.
+- `TShape.track_local_point(which)` returns the local point; `SwarmState.tracked_world()`
+  exposes it; the renderer draws it as a **cyan dot**.
+- Obs dim unchanged (25) — but the *meaning* of the goal-vector and the reward changed.
+
+> This is orthogonal to (and lighter than) switching the curriculum to grow
+> `cap_big_len`; it removes the exploit directly. Both could be combined later.
+
 ## Curriculum learning (gap-size) — IMPLEMENTED
 
 Config `curriculum:` (read by both train scripts):
@@ -245,3 +270,8 @@ wide-gap stages are quick, the last threading stages dominate.
   successful trajectories saved with the training step + difficulty they were found at.
 - **Budget for stages:** PPO 50M, SAC 15M; watch `curriculum/stage_steps` to
   right-size. Worst-case traversal = `max_steps_per_stage × n_stages`.
+- **Goal tracked from big-cap centre** (`env.goal_track: big_cap`) removes the
+  small-cap cheat — agent must lead with the hard end. Changed reward/objective →
+  prefer training from scratch over warm-starting the old (cheat-trained) policy.
+- **No argparse** — all run/algo settings live in `config.yaml` (`run:`,`ppo:`,`sac:`);
+  set `run.eval`/`run.eval_model` to evaluate, `run.init_from` to warm-start.

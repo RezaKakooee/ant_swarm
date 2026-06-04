@@ -39,6 +39,8 @@ class ObservationModel:
 
         self.wall_heads = layout.wall_heads          # (4, 2) static
         self.world_diag = layout.world_diag
+        # goal vector is measured from the same point the reward tracks
+        self.track_local = tshape.track_local_point(getattr(cfg.env, "goal_track", "center"))
 
         # The T's four arm tips in local frame (big-cap ±, small-cap ±).
         sb, cb, cs = tshape.stem_len / 2, tshape.cap_big_len / 2, tshape.cap_small_len / 2
@@ -62,7 +64,8 @@ class ObservationModel:
         W, H = self.world_size
         obj = state.obj
         offsets = state.attachment_offsets
-        goal_d = (self.goal - obj.center) / np.array([W, H], dtype=np.float32)
+        tracked = obj.local_to_world(self.track_local)         # e.g. big-cap centre
+        goal_d = (self.goal - tracked) / np.array([W, H], dtype=np.float32)
         barrier = self._barrier_features(obj)   # shared across ants (depends on T pose)
 
         obs = np.zeros((self.n_ants, OBS_DIM), dtype=np.float32)

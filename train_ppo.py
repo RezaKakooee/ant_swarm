@@ -22,7 +22,8 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 
 sys.path.insert(0, str(Path(__file__).parent))
 from ant_swarm import AntSwarmEnv, load_config, save_code  # noqa: E402
-from train_utils import SuccessTrajectoryCallback, CurriculumCallback  # noqa: E402
+from train_utils import (SuccessTrajectoryCallback, build_curriculum,  # noqa: E402
+                         pin_eval_hard)
 
 PROJECT_ROOT = Path(__file__).parent
 STORAGE_DIR  = PROJECT_ROOT / "storage_local"
@@ -31,6 +32,7 @@ STORAGE_DIR  = PROJECT_ROOT / "storage_local"
 RUN_DEFAULTS = dict(
     wandb=True, render_freq=500_000, init_from=None,
     eval=False, eval_model=None, eval_episodes=20,
+    save_successes=True, dedup_successes=True, dedup_tol=0.05,
 )
 PPO_DEFAULTS = dict(
     timesteps=50_000_000, n_envs=8,
@@ -240,28 +242,25 @@ def train(cfg, s):
         RenderCallback(render_freq=max(s["render_freq"] // s["n_envs"], 1),
                        save_dir=rend_dir, fps=30, seed=0),
         EpisodeMetricsCallback(reach_radius=reach),
-        SuccessTrajectoryCallback(save_dir=run_dir / "successes", reach_radius=reach),
     ]
+    if s["save_successes"]:
+        callbacks.append(SuccessTrajectoryCallback(
+            save_dir=run_dir / "successes", reach_radius=reach,
+            dedup=s["dedup_successes"], dedup_tol=s["dedup_tol"],
+        ))
 
     # optional entropy-coefficient annealing
     if s["ent_coef_final"] is not None:
         callbacks.append(EntCoefAnneal(start=s["ent_coef"], final=s["ent_coef_final"],
                                        total_timesteps=s["timesteps"]))
 
-    # optional gap-size curriculum (eval held at the hard target)
+    # optional curriculum (gap or reverse); eval held at the real hard task
     cur = getattr(cfg, "curriculum", None)
     if cur is not None and getattr(cur, "enabled", False):
-        callbacks.append(CurriculumCallback(
-            start=cur.start_wall_len, target=cur.target_wall_len, step=cur.step,
-            success_threshold=cur.success_threshold, window=cur.window, reach_radius=reach,
-            max_steps_per_stage=getattr(cur, "max_steps_per_stage", None),
-            stop_on_master=getattr(cur, "stop_on_master", False),
-            stop_success=getattr(cur, "stop_success", 0.9),
-            stop_window=getattr(cur, "stop_window", 200),
-        ))
-        eval_env.env_method("set_wall_length", cur.target_wall_len)
-        print(f"Curriculum: wall_len {cur.start_wall_len} -> {cur.target_wall_len} "
-              f"(eval fixed at {cur.target_wall_len})", flush=True)
+        callbacks.append(build_curriculum(cur, reach))
+        pin_eval_hard(eval_env, cur)
+        print(f"Curriculum mode: {getattr(cur, 'mode', 'gap')}  "
+              f"(reward_mode={getattr(cfg.env, 'reward_mode', 'shaped')})", flush=True)
 
     if s["wandb"]:
         from wandb.integration.sb3 import WandbCallback

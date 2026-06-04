@@ -37,9 +37,23 @@ class Renderer:
         self._draw_walls(img, lay, to_px, img_w, img_h)
         self._draw_goal(img, lay, to_px, img_h, img_w)
         self._draw_tshape(img, obj, W, H, img_w, img_h)
+        self._draw_track_point(img, state, to_px, img_h, img_w)
         self._draw_ants(img, state.ants, W, img_w, img_h, to_px)
 
         return np.clip(img * 255, 0, 255).astype(np.uint8)
+
+    def _draw_track_point(self, img, state, to_px, img_h, img_w):
+        """Cyan dot at the goal-tracking point (e.g. big-cap centre)."""
+        if not hasattr(state, "tracked_world"):
+            return
+        tx, ty = to_px(state.tracked_world())
+        r = 3
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                if dx*dx + dy*dy <= r*r:
+                    iy, ix = ty + dy, tx + dx
+                    if 0 <= iy < img_h and 0 <= ix < img_w:
+                        img[iy, ix] = [0.0, 0.85, 0.95]
 
     # ------------------------------------------------------------------
     def _draw_walls(self, img, lay, to_px, img_w, img_h):

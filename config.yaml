@@ -67,17 +67,17 @@ physics:                  # only used when motion.mode == dynamic
 
 env:
   max_steps: 500              # ~2-3x a good trajectory; shorter = more episodes, tighter credit
-  reward_progress_coef: 0.1   # dense shaping weight
+  reward_mode: sparse         # sparse = only success bonus | shaped = + distance shaping
+  reward_progress_coef: 0.1   # dense shaping weight (used only when reward_mode: shaped)
   reward_success: 1.0         # sparse bonus on reaching goal
+  goal_track: big_cap         # T point that must reach the goal: big_cap | center | small_cap
+                              # big_cap motivates leading with the HARD end (no small-cap cheat)
 
-# Gap-size curriculum (read by train scripts). When enabled, the TRAINING barrier
-# starts wide/easy and narrows toward the hard target as success rate climbs; the
-# static walls.length above is then overridden. Eval is held at the hard target.
+# Curriculum (read by train scripts). Advances when rolling success >= threshold;
+# eval is always held at the real hard task. mode: gap | reverse
 curriculum:
   enabled: true
-  start_wall_len: 0.245       # easy: wide gap (~0.31, straight-push possible)
-  target_wall_len: 0.285      # hard: narrow gap (~0.15, threading required)
-  step: 0.01                  # wall-length increment per advance
+  mode: reverse               # gap = widen->narrow barrier | reverse = move spawn goal->full
   success_threshold: 0.7      # advance when rolling success rate >= this
   window: 100                 # episodes in the success-rate window
   max_steps_per_stage: 2000000  # stall safety: force-advance if a stage drags this long (null = off)
@@ -86,14 +86,30 @@ curriculum:
   stop_success: 0.9             # stop when success >= this ...
   stop_window: 200              # ... over this many consecutive episodes at the target
 
+  # --- gap mode: anneal barrier wall length (wider -> narrower gap) ---
+  start_wall_len: 0.245       # easy: wide gap (~0.23, straight-push possible)
+  target_wall_len: 0.285      # hard: narrow gap (0.15, threading required)
+  step: 0.01                  # wall-length increment per advance
+
+  # --- reverse mode: pin gap, move spawn from past-the-barrier back to full ---
+  reverse_wall_len: 0.285     # gap pinned here (the hard target) throughout
+  start_spawn_x: 0.90         # easy: T starts PAST the barrier, near the goal
+  target_spawn_x: 0.23        # hard: full left spawn (the real task)
+  spawn_step: 0.07            # move the start back by this per advance
+  spawn_band: 0.05            # +/- x band the start is sampled within
+
 # Run settings shared by both train scripts (no argparse — everything is here).
 run:
   wandb: true               # log to Weights & Biases (sync_tensorboard mirrors TB)
   render_freq: 500000       # save a policy GIF every N env steps
-  init_from: storage_local/ant__20260601_1714__13102512__train_sac__single/checkpoints/best/best_model.zip         # warm-start policy weights from this checkpoint .zip (null = scratch)
+  init_from: null # storage_local/ant__20260601_1714__13102512__train_sac__single/checkpoints/best/best_model.zip         # warm-start policy weights from this checkpoint .zip (null = scratch)
   eval: false               # true = evaluate `eval_model` instead of training
   eval_model: null          # checkpoint .zip to evaluate when eval: true
   eval_episodes: 20
+  # successful-trajectory saving (kept in <run>/successes/*.json)
+  save_successes: true      # save successful episodes for reuse (BC/demos/warm-start)
+  dedup_successes: true     # skip near-identical paths (fixed spawn -> many copies)
+  dedup_tol: 0.05           # max object-path diff below which two trajectories are "the same"
 
 # PPO hyperparameters + exploration knobs (read by train_ppo.py).
 ppo:
