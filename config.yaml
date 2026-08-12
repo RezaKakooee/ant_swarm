@@ -119,7 +119,7 @@ ppo:
   # core
   n_steps: 4096
   batch_size: 512
-  n_epochs: 100
+  n_epochs: 10              # 100 tanked fps to ~140 (24h timeout at 12M/50M steps) with no gain
   gamma: 0.99               # effective horizon ~100; matches the shorter episodes
   gae_lambda: 0.95
   clip_range: 0.2

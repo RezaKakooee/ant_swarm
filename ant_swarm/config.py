@@ -9,6 +9,7 @@ The YAML lives at the project root (one level above this package).
 """
 from __future__ import annotations
 
+import os
 import types
 from pathlib import Path
 
@@ -16,6 +17,12 @@ import yaml
 
 # package dir → project root → config.yaml
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
+
+
+def _default_path() -> Path:
+    """Project config.yaml, unless ANT_SWARM_CONFIG points at a variant
+    (used to run parallel sweeps, each SLURM job with its own config)."""
+    return Path(os.environ.get("ANT_SWARM_CONFIG") or CONFIG_PATH)
 
 
 def _to_ns(obj):
@@ -28,7 +35,7 @@ def _to_ns(obj):
 
 def load_config_dict(path: str | Path | None = None) -> dict:
     """Return the raw nested dict (used by the web-config generator)."""
-    path = Path(path) if path else CONFIG_PATH
+    path = Path(path) if path else _default_path()
     with open(path) as f:
         return yaml.safe_load(f)
 

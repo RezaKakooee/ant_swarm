@@ -10,6 +10,7 @@ Copies into ``<run_dir>/code/``:
 """
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
@@ -27,8 +28,9 @@ def save_code(run_dir, script_path: str | None = None) -> Path:
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         dirs_exist_ok=True,
     )
-    # config.yaml
-    cfg = _ROOT / "config.yaml"
+    # the config actually in use (ANT_SWARM_CONFIG variant or the project default),
+    # always saved under the canonical name so replay tooling finds it
+    cfg = Path(os.environ.get("ANT_SWARM_CONFIG") or (_ROOT / "config.yaml"))
     if cfg.exists():
         shutil.copy2(cfg, dest / "config.yaml")
     # entry script

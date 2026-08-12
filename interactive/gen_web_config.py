@@ -17,10 +17,13 @@ OUT = Path(__file__).parent / "web_config.js"
 
 
 def main():
+    import os
+    src = os.environ.get("ANT_SWARM_CONFIG", "config.yaml")
     cfg = load_config_dict()
     js = (
-        "// AUTO-GENERATED from config.yaml by gen_web_config.py — DO NOT EDIT.\n"
-        "// Re-run `python gen_web_config.py` after changing config.yaml.\n"
+        f"// AUTO-GENERATED from {src} by gen_web_config.py — DO NOT EDIT.\n"
+        "// Re-run `python gen_web_config.py` after changing config.yaml\n"
+        "// (set ANT_SWARM_CONFIG=<variant.yaml> to use a sweep config).\n"
         "const CONFIG = " + json.dumps(cfg, indent=2) + ";\n"
     )
     OUT.write_text(js)

@@ -14,7 +14,17 @@
 
 PROJECT_ROOT="/scicore/home/graber0001/kakooe0000/ant_swarm"
 
-PY_SCRIPT="train_ppo"
+# Usage: sbatch ops/sb_train.sh [train_ppo|train_sac] [config.yaml]
+#   arg1: training script (default train_ppo)
+#   arg2: optional config variant — exported as ANT_SWARM_CONFIG so parallel
+#         sweep jobs each read their own config instead of the project default
+PY_SCRIPT="${1:-train_ppo}"
+CFG_ARG="${2:-}"
+CFG_TAG=""
+if [ -n "$CFG_ARG" ]; then
+    export ANT_SWARM_CONFIG="$(readlink -f "$CFG_ARG")"
+    CFG_TAG="__$(basename "$CFG_ARG" .yaml)"
+fi
 
 
 run_job() {
@@ -22,6 +32,8 @@ run_job() {
     echo "Ant Swarm RL Training"
     echo "========================================"
     echo "Job ID : $SLURM_JOB_ID"
+    echo "Script : $PY_SCRIPT"
+    echo "Config : ${ANT_SWARM_CONFIG:-config.yaml (default)}"
     echo "Node   : $SLURM_NODELIST"
     echo "GPUs   : $CUDA_VISIBLE_DEVICES"
     echo "Start  : $(date)"
@@ -60,7 +72,7 @@ output_dir="${PROJECT_ROOT}/storage_local/sci_out"
 current_date=$(date +%Y%m%d_%H%M)
 job_id=${SLURM_JOB_ID}
 
-output_file="${output_dir}/ant__${current_date}__${job_id}__${PY_SCRIPT}.out"
+output_file="${output_dir}/ant__${current_date}__${job_id}__${PY_SCRIPT}${CFG_TAG}.out"
 
 mkdir -p ${output_dir}
 

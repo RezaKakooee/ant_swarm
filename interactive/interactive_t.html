@@ -38,7 +38,8 @@
     status: <b id="status">—</b>
   </div>
   <div id="controls">
-    <b>Left-drag</b> move &nbsp; <b>Right-drag</b> rotate &nbsp; <kbd>R</kbd> reset &nbsp;|&nbsp;
+    <b>Left-drag</b> move &nbsp; <b>Right-drag</b> rotate &nbsp; <b>Scroll</b> rotate (also while dragging) &nbsp; <kbd>R</kbd> reset &nbsp;|&nbsp;
+    <label><input type="checkbox" id="rigid" checked> rigid body</label>
     <label><input type="checkbox" id="trueCol" checked> true collision</label>
     <label><input type="checkbox" id="aabbCol"> env AABB collision</label>
   </div>
@@ -145,6 +146,37 @@ function aabbCollision(T){
   for(const rc of RECTS){const[a,b,d,e]=aabbOf(rectCorners(rc,T));if(a<0||b>W||d<0||e>H)return true;
     for(const w of WALLS){const wx0=w.cx-w.hx,wx1=w.cx+w.hx,wy0=w.cy-w.hy,wy1=w.cy+w.hy;if(a<wx1&&b>wx0&&d<wy1&&e>wy0)return true;}}
   return false;
+}
+
+// ---- rigid-body movement: substep toward target, slide along walls ----
+// Same rejection scheme as the gym env: full step -> x-only -> y-only -> stop.
+const SUB = 0.004, SUBA = 0.01;   // translation / rotation substeps (world units, rad)
+function poseFree(x, y, a){ return !trueCollision({x: x, y: y, a: a}); }
+function tryMoveTo(tx, ty){
+  for(let i = 0; i < 400; i++){
+    const dx = tx - T.x, dy = ty - T.y, d = Math.hypot(dx, dy);
+    if(d < 1e-4) break;
+    const s = Math.min(SUB, d), ux = dx / d * s, uy = dy / d * s;
+    let nx = T.x, ny = T.y;
+    if(poseFree(T.x + ux, T.y + uy, T.a)){ nx += ux; ny += uy; }
+    else if(Math.abs(ux) > 1e-9 && poseFree(T.x + ux, T.y, T.a)){ nx += ux; }
+    else if(Math.abs(uy) > 1e-9 && poseFree(T.x, T.y + uy, T.a)){ ny += uy; }
+    else break;
+    if(Math.hypot(nx - T.x, ny - T.y) < 1e-9) break;
+    T.x = nx; T.y = ny;
+  }
+}
+function tryRotateTo(ta){
+  let d = ta - T.a;
+  while(d > Math.PI) d -= 2 * Math.PI;
+  while(d < -Math.PI) d += 2 * Math.PI;
+  const sign = Math.sign(d);
+  let left = Math.abs(d);
+  while(left > 1e-4){
+    const step = Math.min(SUBA, left) * sign;
+    if(!poseFree(T.x, T.y, T.a + step)) break;
+    T.a += step; left -= Math.abs(step);
+  }
 }
 
 // ---- rendering ----
@@ -261,9 +293,24 @@ cv.addEventListener('mousedown',e=>{
 });
 window.addEventListener('mouseup',()=>{dragging=false;rotating=false;cv.classList.remove('grabbing');});
 window.addEventListener('mousemove',e=>{
-  if(dragging){const[wx,wy]=mouseWorld(e);T.x=wx+grabDX;T.y=wy+grabDY;draw();}
-  else if(rotating){T.a=rotStartAngle+(angleToMouse(e)-rotStartMouse);draw();}
+  const rigid = document.getElementById('rigid').checked && !trueCollision(T);
+  if(dragging){
+    const[wx,wy]=mouseWorld(e); const tx=wx+grabDX, ty=wy+grabDY;
+    if(rigid){ tryMoveTo(tx, ty); } else { T.x=tx; T.y=ty; }
+    draw();
+  } else if(rotating){
+    const ta = rotStartAngle+(angleToMouse(e)-rotStartMouse);
+    if(rigid){ tryRotateTo(ta); } else { T.a=ta; }
+    draw();
+  }
 });
+cv.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const rigid=document.getElementById('rigid').checked && !trueCollision(T);
+  const da=(e.deltaY>0?-1:1)*0.02;          // ~1.1 deg per wheel notch
+  if(rigid){ tryRotateTo(T.a+da); } else { T.a+=da; }
+  draw();
+},{passive:false});
 function resetPose(){ T={x:SPAWN[0],y:SPAWN[1],a:0}; }
 window.addEventListener('keydown',e=>{ if(e.key.toLowerCase()==='r'){resetPose();draw();} });
 

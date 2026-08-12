@@ -104,18 +104,6 @@ class AntSwarmEnv(gym.Env):
         self.renderer = Renderer(self.cfg, self.layout)
         self.init_center, self.init_angle = self._sample_spawn()
         self._pending_wall_len = None
-        if self._pending_wall_len is None:
-            return
-        self.cfg.walls.length = self._pending_wall_len
-        self.layout = Layout(self.cfg)                                   # walls + heads + gap
-        self.obs_model = ObservationModel(self.cfg, self.layout, self.tshape)  # refresh wall_heads
-        self.state = SwarmState(self.cfg, self.layout, self.tshape, self.attachment_offsets)
-        self.renderer = Renderer(self.cfg, self.layout)
-        self.init_center, self.init_angle = sample_free_pose(
-            self.tshape, self.layout, self.rng,
-            x_range=self.cfg.spawn.x_range, angle_range=self.cfg.spawn.angle_range,
-            margin=self.cfg.spawn.margin, max_tries=int(self.cfg.spawn.max_tries))
-        self._pending_wall_len = None
 
     # ------------------------------------------------------------------
     # Gym interface

@@ -62,7 +62,9 @@ def _make_run_name(n_ants: int) -> str:
     ts = datetime.now().strftime("%Y%m%d_%H%M")
     job_id = os.environ.get("SLURM_JOB_ID", "local")
     mode = "single" if n_ants == 1 else "multi"
-    return f"ant__{ts}__{job_id}__train_sac__{mode}"
+    tag = Path(os.environ.get("ANT_SWARM_CONFIG", "")).stem   # sweep-variant config
+    base = f"ant__{ts}__{job_id}__train_sac__{mode}"
+    return f"{base}__{tag}" if tag else base
 
 
 def _make_run_dir(run_name: str) -> Path:
