@@ -1,0 +1,19 @@
+# Placeholder: behavior cloning from saved success trajectories.
+# Not wired to a script yet — scripts/il currently holds the demonstration-data
+# tools (render/replay, combine, convert). A future scripts/il/train_bc.py
+# will read this config.
+
+demos:
+  # run dirs (or successes/ dirs) to load success_*.json demonstrations from
+  sources:
+    - storage_local/ant__20260812_0033__20309480__train_sac__single__sac_kin_rev
+  # replay obs from init_pose+actions (see scripts/il/render_success.py: replay_obs)
+  min_length: 10
+  max_length: 400
+
+train:
+  epochs: 50
+  batch_size: 256
+  learning_rate: 0.0003
+  # warm-start target: SAC policy trained by scripts/rl/train_sac.py
+  init_for: sac

@@ -16,7 +16,8 @@ Modular pieces (see each module's docstring):
 """
 from __future__ import annotations
 
-from .config import load_config, load_config_dict
+from .config import load_config, load_config_cli, load_config_dict
+from .log import setup_logging
 from .layout import Layout
 from .tshape import TShape
 from .state import SwarmState
@@ -24,13 +25,15 @@ from .action import ActionModel
 from .observation import ObservationModel
 from .reward import RewardModel
 from .render import Renderer
+from .run_id import build_run_id
 from .snapshot import save_code
 from .ant_swarm import AntSwarmEnv, GymCompatWrapper, make_compat_env
 from ._gym import gym
 
 __all__ = [
     "AntSwarmEnv", "GymCompatWrapper", "make_compat_env", "Renderer", "save_code",
-    "load_config", "load_config_dict",
+    "build_run_id", "setup_logging",
+    "load_config", "load_config_cli", "load_config_dict",
     "Layout", "TShape", "SwarmState",
     "ActionModel", "ObservationModel", "RewardModel",
 ]

@@ -1,70 +1,102 @@
-"""Train SAC (SB3) on the AntSwarmBarrier environment.
+"""Train PPO (SB3) on the AntSwarmBarrier environment.
 
-SAC advantages over PPO for this task:
-  * Off-policy — far more sample-efficient; learns from every transition
-  * Auto entropy tuning — automatically balances exploration vs exploitation
-  * Designed for continuous action spaces
-
-No CLI args — everything is configured in ``config.yaml`` (`run:` + `sac:`
+No CLI args — everything is configured in ``config.yaml`` (`run:` + `ppo:`
 sections). To evaluate instead of train, set `run.eval: true` and
 `run.eval_model: <checkpoint.zip>`. To warm-start, set `run.init_from`.
 
-    python train_sac.py
+    python scripts/rl/train_ppo.py [--config-name pnas_kin_geo] [key=value ...]
 """
 from __future__ import annotations
 
-import os
 import sys
 from collections import deque
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 from gymnasium.wrappers import FlattenObservation
-from stable_baselines3 import SAC
+from loguru import logger
+from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback, EvalCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 
-sys.path.insert(0, str(Path(__file__).parent))
-from ant_swarm import AntSwarmEnv, load_config, save_code  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from ant_swarm import (AntSwarmEnv, build_run_id, load_config_cli,  # noqa: E402
+                       save_code, setup_logging)
 from train_utils import (SuccessTrajectoryCallback, build_curriculum,  # noqa: E402
                          pin_eval_hard)
 
-PROJECT_ROOT = Path(__file__).parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STORAGE_DIR  = PROJECT_ROOT / "storage_local"
 
-WANDB_PROJECT = "ant_swarm"
-WANDB_ENTITY  = "kakooee"
-
-# Defaults if config.yaml lacks the `run:` / `sac:` sections.
+# Defaults if config.yaml lacks the `run:` / `ppo:` sections.
 RUN_DEFAULTS = dict(
-    wandb=True, render_freq=100_000, init_from=None,
+    wandb=True, render_freq=500_000, init_from=None,
     eval=False, eval_model=None, eval_episodes=20,
     save_successes=True, dedup_successes=True, dedup_tol=0.05,
 )
-SAC_DEFAULTS = dict(
-    timesteps=15_000_000, buffer_size=1_000_000, batch_size=256,
-    learning_starts=10_000, gamma=0.99, tau=0.005, learning_rate=3e-4,
-    ent_coef="auto",
+PPO_DEFAULTS = dict(
+    timesteps=50_000_000, n_envs=8,
+    n_steps=4096, batch_size=512, n_epochs=10, gamma=0.99, gae_lambda=0.95,
+    clip_range=0.2, learning_rate=3e-4,
+    ent_coef=0.05, ent_coef_final=None, use_sde=False, sde_sample_freq=16,
+    log_std_init=0.0,
 )
 
 
 def _settings(cfg) -> dict:
-    """Merge the `run:` + `sac:` config sections into one dict (with fallbacks)."""
+    """Merge the `run:` + `ppo:` config sections into one dict (with fallbacks)."""
     run = getattr(cfg, "run", None)
-    sac = getattr(cfg, "sac", None)
+    ppo = getattr(cfg, "ppo", None)
     s = {k: getattr(run, k, d) for k, d in RUN_DEFAULTS.items()}
-    s.update({k: getattr(sac, k, d) for k, d in SAC_DEFAULTS.items()})
+    s.update({k: getattr(ppo, k, d) for k, d in PPO_DEFAULTS.items()})
     return s
 
 
+class EntCoefAnneal(BaseCallback):
+    """Linearly anneal PPO's entropy coefficient from `start` to `final`."""
+
+    def __init__(self, start: float, final: float, total_timesteps: int):
+        super().__init__()
+        self.start, self.final, self.total = start, final, total_timesteps
+
+    def _on_step(self) -> bool:
+        frac = min(self.num_timesteps / max(self.total, 1), 1.0)
+        self.model.ent_coef = self.start + frac * (self.final - self.start)
+        return True
+
+
+class EpisodeMetricsCallback(BaseCallback):
+    """Log success rate + final distance-to-goal over a rolling window of episodes.
+
+    (Reward and length are already logged by VecMonitor as rollout/ep_rew_mean
+    and rollout/ep_len_mean; this adds the task-specific signals.)
+    """
+
+    def __init__(self, reach_radius: float, window: int = 100):
+        super().__init__()
+        self.reach_radius = reach_radius
+        self.success = deque(maxlen=window)
+        self.final_dist = deque(maxlen=window)
+
+    def _on_step(self) -> bool:
+        for info, done in zip(self.locals.get("infos", []), self.locals.get("dones", [])):
+            if done:
+                d = info.get("object_distance")
+                if d is not None:
+                    self.final_dist.append(d)
+                    self.success.append(float(d < self.reach_radius))
+        if self.success:
+            self.logger.record("rollout/success_rate", sum(self.success) / len(self.success))
+            self.logger.record("rollout/final_dist_mean", sum(self.final_dist) / len(self.final_dist))
+        return True
+
+WANDB_PROJECT = "ant_swarm"
+WANDB_ENTITY  = "kakooee"
+
+
 def _make_run_name(n_ants: int) -> str:
-    ts = datetime.now().strftime("%Y%m%d_%H%M")
-    job_id = os.environ.get("SLURM_JOB_ID", "local")
-    mode = "single" if n_ants == 1 else "multi"
-    tag = Path(os.environ.get("ANT_SWARM_CONFIG", "")).stem   # sweep-variant config
-    base = f"ant__{ts}__{job_id}__train_sac__{mode}"
-    return f"{base}__{tag}" if tag else base
+    """One id shared by run dir, wandb, and the ops log (see ant_swarm/run_id.py)."""
+    return build_run_id("train_ppo", n_ants)
 
 
 def _make_run_dir(run_name: str) -> Path:
@@ -76,8 +108,9 @@ def _make_run_dir(run_name: str) -> Path:
 class RenderCallback(BaseCallback):
     """Roll out one deterministic episode every ``render_freq`` steps and save a GIF."""
 
-    def __init__(self, render_freq: int, save_dir: str | Path, fps: int = 30, seed: int = 0):
+    def __init__(self, cfg, render_freq: int, save_dir: str | Path, fps: int = 30, seed: int = 0):
         super().__init__()
+        self.cfg = cfg
         self.render_freq = render_freq
         self.save_dir = Path(save_dir)
         self.fps = fps
@@ -92,7 +125,7 @@ class RenderCallback(BaseCallback):
         import matplotlib.pyplot as plt
         from matplotlib.animation import FuncAnimation, PillowWriter
 
-        env = AntSwarmEnv(seed=self.seed)
+        env = AntSwarmEnv(config=self.cfg, seed=self.seed)
         flat_env = FlattenObservation(env)
         obs, _ = flat_env.reset(seed=self.seed)
 
@@ -118,13 +151,14 @@ class RenderCallback(BaseCallback):
         anim = FuncAnimation(fig, update, frames=len(frames), interval=1000 // self.fps, blit=True)
         anim.save(str(out), writer=PillowWriter(fps=self.fps))
         plt.close(fig)
-        print(f"  [render] {out.relative_to(STORAGE_DIR)}  ({len(frames)} frames)", flush=True)
+        logger.info(f"[render] {out.relative_to(STORAGE_DIR)}  ({len(frames)} frames)")
 
         # --- log to TensorBoard ---
         try:
             from stable_baselines3.common.logger import TensorBoardOutputFormat
             for fmt in self.logger.output_formats:
                 if isinstance(fmt, TensorBoardOutputFormat):
+                    # SummaryWriter.add_video expects (N, T, C, H, W) uint8
                     vid = np.stack(frames)[None].transpose(0, 1, 4, 2, 3)
                     fmt.writer.add_video("render/policy", vid,
                                          global_step=self.num_timesteps, fps=self.fps)
@@ -145,31 +179,9 @@ class RenderCallback(BaseCallback):
             pass
 
 
-class EpisodeMetricsCallback(BaseCallback):
-    """Log success rate + final distance-to-goal over a rolling window of episodes."""
-
-    def __init__(self, reach_radius: float, window: int = 100):
-        super().__init__()
-        self.reach_radius = reach_radius
-        self.success = deque(maxlen=window)
-        self.final_dist = deque(maxlen=window)
-
-    def _on_step(self) -> bool:
-        for info, done in zip(self.locals.get("infos", []), self.locals.get("dones", [])):
-            if done:
-                d = info.get("object_distance")
-                if d is not None:
-                    self.final_dist.append(d)
-                    self.success.append(float(d < self.reach_radius))
-        if self.success:
-            self.logger.record("rollout/success_rate", sum(self.success) / len(self.success))
-            self.logger.record("rollout/final_dist_mean", sum(self.final_dist) / len(self.final_dist))
-        return True
-
-
-def make_env(seed: int = 0):
+def make_env(cfg, seed: int = 0):
     def _init():
-        env = AntSwarmEnv(seed=seed)
+        env = AntSwarmEnv(config=cfg, seed=seed)
         env = FlattenObservation(env)
         return env
     return _init
@@ -182,46 +194,56 @@ def train(cfg, s):
     rend_dir = run_dir / "renders"
     tb_dir   = run_dir / "tb"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    save_code(run_dir, __file__)   # snapshot code + config for reproducibility
+    setup_logging(run_dir)         # console + <run_dir>/train.log
+    save_code(run_dir, __file__, cfg=cfg)   # snapshot code + resolved config
 
-    print(f"Run name  : {run_name}", flush=True)
-    print(f"Run dir   : {run_dir}", flush=True)
+    logger.info(f"Run name  : {run_name}")
+    logger.info(f"Run dir   : {run_dir}")
+    logger.info(f"Exploration: ent_coef={s['ent_coef']} anneal->{s['ent_coef_final']} "
+                f"use_sde={s['use_sde']} log_std_init={s['log_std_init']}")
 
     # --- wandb ---
     wandb_run = None
     if s["wandb"]:
+      try:
         import wandb
         wandb_run = wandb.init(
             project=WANDB_PROJECT, entity=WANDB_ENTITY, name=run_name,
-            dir=str(run_dir), group="sac", tags=["sac", "ant_swarm"],
+            dir=str(run_dir), group="ppo", tags=["ppo", "ant_swarm"],
             config=s, sync_tensorboard=True, save_code=False,
         )
-        print(f"W&B run   : {wandb_run.url}", flush=True)
+        logger.info(f"W&B run   : {wandb_run.url}")
+      except Exception as e:
+        logger.warning(f"wandb init failed — continuing without tracking: {e}")
+        s["wandb"] = False
 
-    # SAC works with a single env (off-policy; parallelism via replay buffer, not rollouts)
-    env = VecMonitor(DummyVecEnv([make_env(seed=0)]))
-    eval_env = VecMonitor(DummyVecEnv([make_env(seed=999)]))
+    vec_env = VecMonitor(DummyVecEnv([make_env(cfg, seed=i) for i in range(s["n_envs"])]))
+    eval_env = VecMonitor(DummyVecEnv([make_env(cfg, seed=999)]))
 
-    model = SAC(
-        "MlpPolicy", env,
-        buffer_size=s["buffer_size"], batch_size=s["batch_size"],
-        learning_starts=s["learning_starts"], gamma=s["gamma"], tau=s["tau"],
+    model = PPO(
+        "MlpPolicy", vec_env,
+        n_steps=s["n_steps"], batch_size=s["batch_size"], n_epochs=s["n_epochs"],
+        gamma=s["gamma"], gae_lambda=s["gae_lambda"], clip_range=s["clip_range"],
         ent_coef=s["ent_coef"], learning_rate=s["learning_rate"],
-        train_freq=1, gradient_steps=1,
+        use_sde=s["use_sde"], sde_sample_freq=s["sde_sample_freq"],
+        policy_kwargs=dict(log_std_init=s["log_std_init"]),
         verbose=1, tensorboard_log=str(tb_dir), seed=0,
     )
 
     if s["init_from"]:   # warm-start weights from an existing checkpoint
         model.set_parameters(s["init_from"])
-        print(f"Warm-started from: {s['init_from']}", flush=True)
+        logger.info(f"Warm-started from: {s['init_from']}")
 
     reach = cfg.goal.reach_radius
     callbacks = [
-        CheckpointCallback(save_freq=50_000, save_path=str(ckpt_dir), name_prefix="sac"),
+        CheckpointCallback(save_freq=max(50_000 // s["n_envs"], 1),
+                           save_path=str(ckpt_dir), name_prefix="ppo"),
         EvalCallback(eval_env, best_model_save_path=str(ckpt_dir / "best"),
-                     log_path=str(ckpt_dir / "eval_logs"), eval_freq=20_000,
+                     log_path=str(ckpt_dir / "eval_logs"),
+                     eval_freq=max(20_000 // s["n_envs"], 1),
                      n_eval_episodes=10, deterministic=True, verbose=1),
-        RenderCallback(render_freq=s["render_freq"], save_dir=rend_dir, fps=30, seed=0),
+        RenderCallback(cfg=cfg, render_freq=max(s["render_freq"] // s["n_envs"], 1),
+                       save_dir=rend_dir, fps=30, seed=0),
         EpisodeMetricsCallback(reach_radius=reach),
     ]
     if s["save_successes"]:
@@ -230,13 +252,18 @@ def train(cfg, s):
             dedup=s["dedup_successes"], dedup_tol=s["dedup_tol"],
         ))
 
+    # optional entropy-coefficient annealing
+    if s["ent_coef_final"] is not None:
+        callbacks.append(EntCoefAnneal(start=s["ent_coef"], final=s["ent_coef_final"],
+                                       total_timesteps=s["timesteps"]))
+
     # optional curriculum (gap or reverse); eval held at the real hard task
     cur = getattr(cfg, "curriculum", None)
     if cur is not None and getattr(cur, "enabled", False):
         callbacks.append(build_curriculum(cur, reach))
         pin_eval_hard(eval_env, cur)
-        print(f"Curriculum mode: {getattr(cur, 'mode', 'gap')}  "
-              f"(reward_mode={getattr(cfg.env, 'reward_mode', 'shaped')})", flush=True)
+        logger.info(f"Curriculum mode: {getattr(cur, 'mode', 'gap')}  "
+                    f"(reward_mode={getattr(cfg.env, 'reward_mode', 'shaped')})")
 
     if s["wandb"]:
         from wandb.integration.sb3 import WandbCallback
@@ -244,9 +271,9 @@ def train(cfg, s):
 
     model.learn(total_timesteps=s["timesteps"], callback=callbacks)
 
-    final_path = ckpt_dir / "sac_final"
+    final_path = ckpt_dir / "ppo_final"
     model.save(str(final_path))
-    print(f"Saved → {final_path}.zip", flush=True)
+    logger.info(f"Saved → {final_path}.zip")
     if wandb_run is not None:
         wandb_run.finish()
 
@@ -254,8 +281,8 @@ def train(cfg, s):
 def evaluate(cfg, s):
     if not s["eval_model"]:
         raise SystemExit("Set run.eval_model in config.yaml to a checkpoint .zip")
-    env = FlattenObservation(AntSwarmEnv(seed=42))
-    model = SAC.load(s["eval_model"], env=env)
+    env = FlattenObservation(AntSwarmEnv(config=cfg, seed=42))
+    model = PPO.load(s["eval_model"], env=env)
     reach = cfg.goal.reach_radius
 
     returns, lengths, successes = [], [], []
@@ -279,7 +306,8 @@ def evaluate(cfg, s):
 
 
 def main():
-    cfg = load_config()
+    setup_logging()
+    cfg = load_config_cli()
     s = _settings(cfg)
     if s["eval"]:
         evaluate(cfg, s)

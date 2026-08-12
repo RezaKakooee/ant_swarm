@@ -28,7 +28,7 @@ log_file="storage_local/sci_out/log_${current_datetime}.out"
 
 # List of Python scripts to run
 scripts=(
-    "random_agent.py"
+    "scripts/heuristic/random_agent.py"
 )
 
 # Run each Python script in the background and append output to the single log file

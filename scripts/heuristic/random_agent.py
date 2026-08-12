@@ -6,36 +6,32 @@ A baseline / sanity-check policy: every step each ant gets a random
 Saves one GIF per episode by default into a timestamped run dir under
 ``storage_local/<date>__ant__rnd/renders/``.
 
-Usage:
-    python random_agent.py                      # 5 episodes, one GIF each
-    python random_agent.py --episodes 20
-    python random_agent.py --no-gif             # stats only, no GIFs
-    python random_agent.py --episodes 3 --seed 3
+Usage (hydra-style overrides; config: configs/heuristic/random_agent.yaml):
+    python scripts/heuristic/random_agent.py                      # 5 episodes, one GIF each
+    python scripts/heuristic/random_agent.py heuristic.episodes=20
+    python scripts/heuristic/random_agent.py heuristic.gif=false  # stats only
+    python scripts/heuristic/random_agent.py heuristic.episodes=3 heuristic.seed=3
 """
 from __future__ import annotations
 
-import argparse
 import os
 import sys
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).parent))
-from ant_swarm import AntSwarmEnv, save_code  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from ant_swarm import (AntSwarmEnv, build_run_id, load_config_cli,  # noqa: E402
+                       save_code, setup_logging)
+from loguru import logger  # noqa: E402
 
-PROJECT_ROOT = Path(__file__).parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STORAGE_DIR = PROJECT_ROOT / "storage_local"
 
 
 def _make_run_dir(n_ants: int) -> Path:
-    """Run dir under storage_local: ``ant__YYYYMMDD_HHMM__<jobid>__rnd__<single|multi>``."""
-    ts = datetime.now().strftime("%Y%m%d_%H%M")
-    job_id = os.environ.get("SLURM_JOB_ID", "local")
-    mode = "single" if n_ants == 1 else "multi"
-    name = f"ant__{ts}__{job_id}__rnd__{mode}"
-    run_dir = STORAGE_DIR / name
+    """Run dir under storage_local, named by the shared run id (ant_swarm/run_id.py)."""
+    run_dir = STORAGE_DIR / build_run_id("rnd", n_ants)
     (run_dir / "renders").mkdir(parents=True, exist_ok=True)
     return run_dir
 
@@ -72,40 +68,39 @@ def save_gif(frames, env, out: Path, fps: int = 30):
     anim = FuncAnimation(fig, update, frames=len(frames), interval=1000 / fps, blit=True)
     anim.save(str(out), writer=PillowWriter(fps=fps))
     plt.close(fig)
-    print(f"  saved GIF → {out}  ({len(frames)} frames)")
+    logger.info(f"saved GIF → {out}  ({len(frames)} frames)")
 
 
 def main():
-    p = argparse.ArgumentParser(description="Random-action agent for AntSwarmBarrier")
-    p.add_argument("--episodes", type=int, default=5)
-    p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--no-gif", dest="gif", action="store_false",
-                   help="disable GIF saving (on by default)")
-    p.add_argument("--fps", type=int, default=30)
-    args = p.parse_args()
+    setup_logging()
+    cfg = load_config_cli(config_dir=PROJECT_ROOT / "configs" / "heuristic",
+                          default_name="random_agent")
+    h = cfg.get("heuristic", {})
+    episodes = int(h.get("episodes", 5))
+    seed = int(h.get("seed", 0))
+    gif = bool(h.get("gif", True))
+    fps = int(h.get("fps", 30))
 
-    env = AntSwarmEnv(seed=args.seed)
+    env = AntSwarmEnv(config=cfg, seed=seed)
 
-    run_dir = _make_run_dir(env.n_ants) if args.gif else None
+    run_dir = _make_run_dir(env.n_ants) if gif else None
     if run_dir is not None:
-        save_code(run_dir, __file__)   # snapshot code + config for reproducibility
-    if run_dir is not None:
-        print(f"Run dir : {run_dir}")
+        setup_logging(run_dir)
+        save_code(run_dir, __file__, cfg=cfg)   # snapshot code + resolved config
+        logger.info(f"Run dir : {run_dir}")
 
     returns, steps, successes = [], [], []
-    for ep in range(args.episodes):
-        record = args.gif
-        ret, n, ok, frames = run_episode(env, seed=args.seed + ep, record=record)
+    for ep in range(episodes):
+        ret, n, ok, frames = run_episode(env, seed=seed + ep, record=gif)
         returns.append(ret); steps.append(n); successes.append(ok)
-        print(f"  ep {ep+1:3d}  return={ret:+.3f}  steps={n}  success={ok}")
-        if record and frames is not None:
+        logger.info(f"ep {ep+1:3d}  return={ret:+.3f}  steps={n}  success={ok}")
+        if gif and frames is not None:
             out = run_dir / "renders" / f"ep_{ep+1:03d}.gif"
-            print(f"  saving GIF for episode {ep+1} to {out}...")
-            save_gif(frames, env, out, fps=args.fps)
+            save_gif(frames, env, out, fps=fps)
 
-    print(f"\nmean return : {np.mean(returns):+.3f} ± {np.std(returns):.3f}")
-    print(f"mean steps  : {np.mean(steps):.0f}")
-    print(f"success rate: {np.mean(successes)*100:.1f}%")
+    logger.info(f"mean return : {np.mean(returns):+.3f} ± {np.std(returns):.3f}")
+    logger.info(f"mean steps  : {np.mean(steps):.0f}")
+    logger.info(f"success rate: {np.mean(successes)*100:.1f}%")
 
 
 if __name__ == "__main__":

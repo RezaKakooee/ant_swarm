@@ -11,6 +11,7 @@ from collections import deque
 from pathlib import Path
 
 import numpy as np
+from loguru import logger
 from stable_baselines3.common.callbacks import BaseCallback
 
 
@@ -143,8 +144,8 @@ class SuccessTrajectoryCallback(BaseCallback):
             json.dump(payload, f)
         self._n_saved += 1
         if self.verbose:
-            print(f"  [success] saved {fname.name}  len={length}  return={ret:.3f}  "
-                  f"(unique={self._n_saved}, dup-skipped={self._n_dup})", flush=True)
+            logger.info(f"[success] saved {fname.name}  len={length}  return={ret:.3f}  "
+                        f"(unique={self._n_saved}, dup-skipped={self._n_dup})")
         try:
             self.logger.record("rollout/successes_saved", self._n_saved)
             self.logger.record("rollout/successes_dup_skipped", self._n_dup)
@@ -225,8 +226,8 @@ class CurriculumCallback(BaseCallback):
         self.logger.record("curriculum/stage_idx", self._stage_idx)
         if self.verbose:
             knob = "spawn_x" if self.mode == "reverse" else "wall_len"
-            print(f"[curriculum] stage {self._stage_idx} done in {took} steps "
-                  f"({reason}) → {knob}={self.current:.3f}", flush=True)
+            logger.info(f"[curriculum] stage {self._stage_idx} done in {took} steps "
+                        f"({reason}) → {knob}={self.current:.3f}")
         self._stage_idx += 1
         self._stage_start_step = self.num_timesteps
         self._eps_since_advance = 0
@@ -239,8 +240,8 @@ class CurriculumCallback(BaseCallback):
         self._stage_start_step = self.num_timesteps
         if self.verbose:
             knob = "spawn_x" if self.mode == "reverse" else "wall_len"
-            print(f"[curriculum:{self.mode}] start {knob}={self.current:.3f} "
-                  f"(target {self.target:.3f})", flush=True)
+            logger.info(f"[curriculum:{self.mode}] start {knob}={self.current:.3f} "
+                        f"(target {self.target:.3f})")
 
     def _on_step(self) -> bool:
         at_target = self._at_target()
@@ -258,9 +259,9 @@ class CurriculumCallback(BaseCallback):
                 and sum(self._target_success) / len(self._target_success) >= self.stop_success):
             sr = sum(self._target_success) / len(self._target_success)
             knob = "spawn_x" if self.mode == "reverse" else "wall_len"
-            print(f"[curriculum] TARGET MASTERED: success {sr:.2f} over "
-                  f"{self._target_success.maxlen} episodes at {knob}={self.current:.3f} "
-                  f"→ stopping training (step {self.num_timesteps}).", flush=True)
+            logger.info(f"[curriculum] TARGET MASTERED: success {sr:.2f} over "
+                        f"{self._target_success.maxlen} episodes at {knob}={self.current:.3f} "
+                        f"→ stopping training (step {self.num_timesteps}).")
             return False   # stops model.learn()
 
         if not self._at_target():

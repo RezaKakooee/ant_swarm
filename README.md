@@ -23,28 +23,31 @@ gradient. Design reasoning lives in
 ## Layout
 
 ```
-config.yaml            single source of truth for ALL parameters (no argparse)
 ant_swarm/             the env package (gym/gymnasium, RL-library-agnostic)
-  config.py            load config.yaml into a namespace
+  config.py            load the config yaml into a namespace
   geometry.py          LocalRect + SAT collision helpers
   layout.py            world bounds, barrier walls, wall "heads", goal
   tshape.py            the rigid T-shape: geometry, pose, collision, spawning
   state.py             mutable episode state + physics integration
   action.py            action space (kinematic | dynamic) → wrench
   observation.py       per-ant 25-float observation
-  reward.py            sparse | shaped reward
+  reward.py            sparse | shaped | geodesic reward
   render.py            pure-NumPy RGB renderer (no display needed)
   ant_swarm.py         AntSwarmEnv composing the above + curriculum hooks
   snapshot.py          save_code(): snapshot code+config into each run dir
-train_ppo.py           PPO training/eval  (settings: config.yaml `run:` + `ppo:`)
-train_sac.py           SAC training/eval  (settings: config.yaml `run:` + `sac:`)
-train_utils.py         SB3 callbacks: curriculum, success saving (SB3 kept out of the package)
-random_agent.py        random-action baseline + GIFs
-render_success.py      replay saved success JSONs → GIF (single or grid)
-combine_successes.py   consolidate per-episode success files
+configs/               all yaml configs (see configs/README.md)
+  rl/config.yaml       project default — single source of truth (no argparse)
+  rl/pnas_*.yaml       PNAS-replica experiment variants
+  heuristic/, il/      configs for the other script families
+scripts/               entry points (see scripts/README.md)
+  rl/                  train_ppo.py, train_sac.py, train_utils.py,
+                       gen_geodesic_field.py (geodesic-reward field)
+  il/                  success-trajectory tools: render_success.py,
+                       combine_successes.py, convert_successes.py
+  heuristic/           random_agent.py (random baseline + GIFs)
 interactive/           browser sandbox (interactive_t.html; web_config.js generated
-                       from config.yaml by gen_web_config.py)
-ops/                   SLURM scripts (sb_train.sh submits training)
+                       from the config by gen_web_config.py)
+ops/                   SLURM + shell scripts (sb_train.sh submits training)
 storage_local/         run outputs: checkpoints, renders, successes, logs
 ```
 
@@ -55,21 +58,27 @@ Dependencies: `numpy`, `pyyaml`, `gymnasium`, `stable-baselines3`, `matplotlib`
 
 ```bash
 # sanity-check the env with random actions (writes GIFs under storage_local/)
-python random_agent.py --episodes 3
+python scripts/heuristic/random_agent.py heuristic.episodes=3
 
-# train — everything is configured in config.yaml, no CLI args
-python train_ppo.py
-python train_sac.py
+# train — everything is configured in configs/rl/config.yaml, no CLI args
+python scripts/rl/train_ppo.py
+python scripts/rl/train_sac.py
+
+# train with a config variant + hydra-style overrides
+python scripts/rl/train_sac.py --config-name pnas_kin_geo
+python scripts/rl/train_sac.py --config-name pnas_kin_geo sac.timesteps=5e6 run.wandb=false
+ANT_SWARM_CONFIG=configs/rl/pnas_kin_geo.yaml python scripts/rl/train_sac.py   # env-var form
 
 # evaluate a checkpoint: set run.eval: true and run.eval_model: <ckpt.zip>
-# in config.yaml, then run the same script
+# in the config, then run the same script
 
 # replay a saved success trajectory to a GIF
-python render_success.py storage_local/<run>/successes/success_*.json
+python scripts/il/render_success.py storage_local/<run>/successes/success_*.json
 
 # on the cluster (script + optional config variant as args)
 sbatch ops/sb_train.sh train_sac
-sbatch ops/sb_train.sh train_sac path/to/variant.yaml
+sbatch ops/sb_train.sh train_sac configs/rl/pnas_kin_geo.yaml
+sbatch ops/sb_train.sh train_sac configs/rl/pnas_kin_geo.yaml sac.timesteps=5e6
 ```
 
 Or use the env directly:
@@ -97,5 +106,5 @@ frame = env.render()                     # (H, W, 3) uint8
   policy GIFs, TensorBoard logs (mirrored to W&B), and deduplicated success
   trajectories stored as minimal replayable JSONs (init pose + actions).
 
-After editing `config.yaml`, refresh the browser sandbox's copy with
+After editing a config, refresh the browser sandbox's copy with
 `python interactive/gen_web_config.py`.

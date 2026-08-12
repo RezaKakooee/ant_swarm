@@ -117,6 +117,7 @@ class AntSwarmEnv(gym.Env):
             self.init_center, self.init_angle = self._sample_spawn()
         self.state.reset(self.init_center, self.init_angle)
         self._prev_dist = self.state.distance_to_goal()
+        self.reward_model.reset(self.state)      # geodesic mode re-anchors its potential
         return self.obs_model.observe(self.state), {}
 
     def step(self, actions):
@@ -131,7 +132,8 @@ class AntSwarmEnv(gym.Env):
             self.state.integrate(force, torque)
 
         dist = self.state.distance_to_goal()
-        reward, reached = self.reward_model.compute(dist, self._prev_dist, self.layout.reach_radius)
+        reward, reached = self.reward_model.compute(
+            dist, self._prev_dist, self.layout.reach_radius, state=self.state)
         self._prev_dist = dist
 
         terminated = bool(reached)

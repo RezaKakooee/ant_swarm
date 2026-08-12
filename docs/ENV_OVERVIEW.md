@@ -48,12 +48,12 @@ all target.
 
 ## Architecture — how the modules compose
 
-Everything is parameterised by `config.yaml` (single source of truth, no CLI
+Everything is parameterised by `configs/rl/config.yaml` (single source of truth, no CLI
 args anywhere). The package is RL-library-agnostic; anything importing
-stable-baselines3 lives outside it in `train_utils.py`.
+stable-baselines3 lives outside it in `scripts/rl/train_utils.py`.
 
 ```
-config.yaml ──► config.py (namespace)
+configs/rl/config.yaml ──► config.py (namespace)
                    │
      ┌─────────────┼──────────────┐
      ▼             ▼              ▼
@@ -142,7 +142,7 @@ cyan dot.
 
 Sparse reward + bottleneck exploration means the success signal may never be
 seen from the full task. Two curricula (config `curriculum:`, executed by
-`CurriculumCallback` in `train_utils.py`) create winnable episodes first:
+`CurriculumCallback` in `scripts/rl/train_utils.py`) create winnable episodes first:
 
 * **`gap`** — start with a wide gap (straight push possible) and narrow it by
   `step` each time rolling success ≥ threshold. Caveat learned the hard way:
@@ -161,8 +161,8 @@ stage, and training stops early once the target is mastered
 
 ## Training stack (outside the env package)
 
-PPO (`train_ppo.py`, 8 envs, gSDE + entropy annealing) and SAC
-(`train_sac.py`, single env) via stable-baselines3, both with:
+PPO (`scripts/rl/train_ppo.py`, 8 envs, gSDE + entropy annealing) and SAC
+(`scripts/rl/train_sac.py`, single env) via stable-baselines3, both with:
 
 * checkpoints + best-model eval, policy GIFs (disk/TensorBoard/W&B),
   success-rate + final-distance metrics;
@@ -170,7 +170,7 @@ PPO (`train_ppo.py`, 8 envs, gSDE + entropy annealing) and SAC
   episode saved as a minimal replayable JSON — init pose + action sequence +
   the difficulty it was solved at — with tolerance-based path dedup. Successes
   are rare and precious here; the files feed replay/rendering
-  (`render_success.py`) and future BC/warm-starting;
+  (`scripts/il/render_success.py`) and future BC/warm-starting;
 * full reproducibility: each run dir snapshots the package source + the exact
   `config.yaml` used (`snapshot.save_code`).
 

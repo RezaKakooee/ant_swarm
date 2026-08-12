@@ -21,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from ant_swarm import AntSwarmEnv, load_config  # noqa: E402
 
 
@@ -121,19 +121,23 @@ def render_trajectory(json_path: Path, index: int = 0, out: Path | None = None, 
     return out
 
 
-def render_grid(json_path: Path, n: int = 9, out: Path | None = None, fps: int = 30) -> Path:
-    """Tile up to `n` trajectories from a combined file into one GIF (looped)."""
+def render_grid(json_path: Path, n: int = 9, out: Path | None = None, fps: int = 30,
+                tile_w: int = 240, frame_cap: int = 150) -> Path:
+    """Tile up to `n` trajectories from a combined file into one GIF (looped).
+
+    `tile_w` = pixel width per tile; `frame_cap` = max frames per clip.
+    For big grids (e.g. 10x10) use smaller tiles: --tile 128 --cap 80.
+    """
     data = json.load(open(json_path))
     if not isinstance(data, list):
         data = [data]
     trajs = data[:n]
     cfg = _cfg_for(json_path)
     # low-res + time-subsampled so a grid of long clips fits in memory
-    tile_w = 240
     clips = []
     for t in trajs:
-        T_full = len(t["obs"])
-        stride = max(1, T_full // 150)        # cap each clip at ~150 frames
+        T_full = len(t["actions"]) if "actions" in t else len(t["obs"])
+        stride = max(1, T_full // frame_cap)
         clips.append(_frames_for(t, cfg, img_width=tile_w, stride=stride))
     cols = int(math.ceil(math.sqrt(len(clips))))
     rows = int(math.ceil(len(clips) / cols))
@@ -172,7 +176,9 @@ def main():
                 n = int(argv[gi + 1])
             except ValueError:
                 pass
-        render_grid(path, n=n, out=out, fps=fps)
+        render_grid(path, n=n, out=out, fps=fps,
+                    tile_w=int(_opt(argv, "--tile", 240)),
+                    frame_cap=int(_opt(argv, "--cap", 150)))
     else:
         render_trajectory(path, index=int(_opt(argv, "--index", 0)), out=out, fps=fps)
 

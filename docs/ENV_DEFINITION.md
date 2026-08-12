@@ -2,7 +2,7 @@
 
 **Package:** `ant_swarm/` (pure Python/NumPy — no physics engine, no display dependency)
 **Registered ids:** `AntSwarmBarrier-v0` (gymnasium 5-tuple API), `AntSwarmBarrier-v0-compat` (classic gym 4-tuple)
-**Parameters:** all values below come from `config.yaml` (single source of truth) and reflect its current state; the geometry ones are multiplied by the global `scene_scale` (1.0).
+**Parameters:** all values below come from `configs/rl/config.yaml` (single source of truth) and reflect its current state; the geometry ones are multiplied by the global `scene_scale` (1.0).
 
 ---
 

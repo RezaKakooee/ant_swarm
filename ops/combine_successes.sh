@@ -11,4 +11,4 @@ conda activate roboverse
 
 mkdir -p storage_local/sci_out
 
-nohup python "$repo_root/combine_successes.py" storage_local --delete > storage_local/sci_out/combine.log 2>&1 &
+nohup python "$repo_root/scripts/il/combine_successes.py" storage_local --delete > storage_local/sci_out/combine.log 2>&1 &

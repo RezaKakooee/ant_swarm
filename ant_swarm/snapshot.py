@@ -18,7 +18,7 @@ _PKG_DIR = Path(__file__).resolve().parent        # .../ant_swarm/ant_swarm
 _ROOT = _PKG_DIR.parent                           # project root
 
 
-def save_code(run_dir, script_path: str | None = None) -> Path:
+def save_code(run_dir, script_path: str | None = None, cfg=None) -> Path:
     dest = Path(run_dir) / "code"
     dest.mkdir(parents=True, exist_ok=True)
 
@@ -28,11 +28,17 @@ def save_code(run_dir, script_path: str | None = None) -> Path:
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         dirs_exist_ok=True,
     )
-    # the config actually in use (ANT_SWARM_CONFIG variant or the project default),
-    # always saved under the canonical name so replay tooling finds it
-    cfg = Path(os.environ.get("ANT_SWARM_CONFIG") or (_ROOT / "config.yaml"))
-    if cfg.exists():
-        shutil.copy2(cfg, dest / "config.yaml")
+    # the config actually in use, always saved under the canonical name so
+    # replay tooling finds it. Preferred: the caller passes the RESOLVED cfg
+    # object (captures Hydra CLI overrides); fallback: copy the source yaml.
+    if cfg is not None:
+        from omegaconf import OmegaConf
+        (dest / "config.yaml").write_text(OmegaConf.to_yaml(cfg))
+    else:
+        src = Path(os.environ.get("ANT_SWARM_CONFIG")
+                   or (_ROOT / "configs" / "rl" / "config.yaml"))
+        if src.exists():
+            shutil.copy2(src, dest / "config.yaml")
     # entry script
     if script_path:
         sp = Path(script_path)

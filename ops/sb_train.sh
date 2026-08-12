@@ -14,17 +14,26 @@
 
 PROJECT_ROOT="/scicore/home/graber0001/kakooe0000/ant_swarm"
 
-# Usage: sbatch ops/sb_train.sh [train_ppo|train_sac] [config.yaml]
-#   arg1: training script (default train_ppo)
+# Usage: sbatch ops/sb_train.sh [train_ppo|train_sac] [config.yaml] [key=value ...]
+#   arg1: training script — a name resolved under scripts/rl/ (default train_ppo),
+#         or an explicit path like scripts/rl/train_sac.py
 #   arg2: optional config variant — exported as ANT_SWARM_CONFIG so parallel
 #         sweep jobs each read their own config instead of the project default
+#   rest: optional hydra-style overrides passed to the script, e.g.
+#         sbatch ops/sb_train.sh train_sac configs/rl/pnas_kin_geo.yaml sac.timesteps=5e6
 PY_SCRIPT="${1:-train_ppo}"
+case "$PY_SCRIPT" in
+    */*) ;;                                  # explicit path: use as given
+    *)   PY_SCRIPT="scripts/rl/${PY_SCRIPT}" ;;
+esac
+PY_SCRIPT="${PY_SCRIPT%.py}"
 CFG_ARG="${2:-}"
 CFG_TAG=""
 if [ -n "$CFG_ARG" ]; then
     export ANT_SWARM_CONFIG="$(readlink -f "$CFG_ARG")"
     CFG_TAG="__$(basename "$CFG_ARG" .yaml)"
 fi
+EXTRA_ARGS=("${@:3}")               # hydra-style key=value overrides
 
 
 run_job() {
@@ -57,7 +66,7 @@ run_job() {
     echo "GPU    : $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader)"
     echo ""
 
-    python3 -u "$PROJECT_ROOT/$PY_SCRIPT".py 
+    python3 -u "$PROJECT_ROOT/$PY_SCRIPT".py "${EXTRA_ARGS[@]}"
 
     echo ""
     echo "End : $(date)"
@@ -66,13 +75,15 @@ run_job() {
 
 
 
-# Generate output filename
+# Mint ONE run id up front (see ant_swarm/run_id.py): the .out log, the
+# storage_local run dir, and the wandb run all share this exact name.
 PROJECT_ROOT="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 output_dir="${PROJECT_ROOT}/storage_local/sci_out"
 current_date=$(date +%Y%m%d_%H%M)
 job_id=${SLURM_JOB_ID}
 
-output_file="${output_dir}/ant__${current_date}__${job_id}__${PY_SCRIPT}${CFG_TAG}.out"
+export ANT_SWARM_RUN_ID="ant__${current_date}__${job_id}__$(basename "$PY_SCRIPT")${CFG_TAG}"
+output_file="${output_dir}/${ANT_SWARM_RUN_ID}.out"
 
 mkdir -p ${output_dir}
 
