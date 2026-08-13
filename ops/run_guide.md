@@ -8,6 +8,26 @@ cd ~/ant_swarm
 conda activate roboverse
 ```
 
+## Install on a new server
+
+```bash
+git clone https://github.com/RezaKakooee/ant_swarm.git && cd ant_swarm
+conda create -n antswarm python=3.10 -y && conda activate antswarm
+pip install -r requirements.txt          # pure Python, no MuJoCo
+wandb login                              # or add run.wandb=false to commands
+
+# the geodesic field is not in git (storage_local/ is ignored) — regenerate (~1 min):
+python scripts/rl/gen_geodesic_field.py configs/rl/pnas_kin_geo_v2.yaml \
+    --out storage_local/fields/pnas_gap015.npz --inflate 0.002 --dx 0.003 --dth 2
+
+# smoke test, then train:
+python scripts/rl/train_sac.py --config-name pnas_dyn_geo_v2 run.wandb=false sac.timesteps=2000
+python scripts/rl/train_sac.py --config-name pnas_dyn_geo_v2
+```
+
+Without SLURM, run directly (nohup/tmux); with SLURM, adapt the partition
+lines at the top of `ops/sb_train.sh`.
+
 ```
 ops/
 ├── sb_train.sh            # SLURM training job (a100, 1 day) — the main launcher
@@ -36,6 +56,12 @@ sbatch ops/sb_train.sh train_sac configs/rl/pnas_kin_geo.yaml
 
 # variant + hydra-style overrides
 sbatch ops/sb_train.sh train_sac configs/rl/pnas_kin_geo.yaml sac.timesteps=5e6
+
+# other GPU partitions: sbatch flags override the script's #SBATCH headers.
+# These MLP jobs barely use the GPU — rtx4090 is a good fit and a shorter queue.
+sbatch --partition=rtx4090 --qos=rtx4090-1day --gres=gpu:1 \
+    ops/sb_train.sh train_sac configs/rl/pnas_dyn_geo_v2.yaml
+# also available: titan (titan-1day), l40s (l40s-1day); -6hours/-1week QOS variants
 ```
 
 One run id (see `ant_swarm/run_id.py`) names three things identically:

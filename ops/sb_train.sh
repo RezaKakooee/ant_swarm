@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name=ant
-#SBATCH --qos=a100-1day
+#SBATCH --qos=rtx4090-1day
 #SBATCH --time=1-00:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --partition=a100
+#SBATCH --partition=rtx4090
 #SBATCH --gres=gpu:1
 #SBATCH --output=/dev/null
 #SBATCH --error=/dev/null

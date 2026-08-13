@@ -1,0 +1,23 @@
+# ant_swarm — tested versions (conda env "roboverse", python 3.10, 2026-08).
+# Pure Python: no MuJoCo, no compiled extensions. Torch: any >=2.x CUDA build
+# matching your server works; the pinned one below is what we test with.
+
+numpy==1.26.4
+PyYAML==6.0.3
+gymnasium==1.3.0
+stable-baselines3==2.7.1
+torch==2.7.0
+matplotlib==3.10.9
+loguru==0.7.2
+hydra-core==1.3.2
+omegaconf==2.3.0
+tensorboard==2.20.0
+
+# optional: experiment tracking (or set run.wandb=false)
+wandb==0.23.1
+
+# optional: video grids (scripts/il + HD renders) and geometry scans
+imageio==2.37.3
+imageio-ffmpeg==0.6.0
+scipy==1.15.3
+opencv-python==4.10.0.84

@@ -54,6 +54,8 @@
     <div class="row"><label>goal x</label>     <input type="range" id="sl_goalx" min="0.60" max="1.20" step="0.01"><span class="val" id="v_goalx"></span></div>
     <div class="row"><label>thickness</label>  <input type="range" id="sl_th"    min="0.01" max="0.05" step="0.002"><span class="val" id="v_th"></span></div>
     <div class="row"><label>reach radius</label><input type="range" id="sl_reach" min="0.02" max="0.10" step="0.005"><span class="val" id="v_reach"></span></div>
+    <div class="row"><label>tab length</label> <input type="range" id="sl_tablen" min="0" max="0.12" step="0.005"><span class="val" id="v_tablen"></span></div>
+    <div class="row"><label>tab depth</label>  <input type="range" id="sl_tabdep" min="0.004" max="0.03" step="0.002"><span class="val" id="v_tabdep"></span></div>
   </div>
 
   <!-- export -->
@@ -81,6 +83,9 @@ function defaults() {
     capB:  CONFIG.tshape.cap_big_len,
     capS:  CONFIG.tshape.cap_small_len,
     th:    CONFIG.tshape.thickness,
+    wth:   CONFIG.walls.thickness,
+    tabLen:   (CONFIG.walls.tab_len   !== undefined ? CONFIG.walls.tab_len   : 0.0),
+    tabDepth: (CONFIG.walls.tab_depth !== undefined ? CONFIG.walls.tab_depth : 0.012),
     wlen:  CONFIG.walls.length,
     wmid:  (xc[0] + xc[1]) / 2,        // midpoint kept fixed
     wspc:  Math.abs(xc[1] - xc[0]),    // spacing between columns
@@ -91,7 +96,7 @@ function defaults() {
 let G = defaults();
 
 // ---- derived geometry (recomputed on every edit) ----
-let TH, HT, STEM, CAPB, CAPS, RECTS, WALL_LEN, HL, WALL_HT, WALL_X, WALLS, GOAL, GOAL_R, SPAWN;
+let TH, HT, STEM, CAPB, CAPS, RECTS, WALL_LEN, HL, WALL_HT, WALL_X, WALLS, TABS, GOAL, GOAL_R, SPAWN;
 function rebuild() {
   TH = G.th * S; HT = TH / 2;
   STEM = G.stem * S; CAPB = G.capB * S; CAPS = G.capS * S;
@@ -100,13 +105,28 @@ function rebuild() {
     [-STEM/2,  0.0, HT,     CAPB/2], // big cap
     [ STEM/2,  0.0, HT,     CAPS/2], // small cap
   ];
-  WALL_LEN = G.wlen * S; HL = WALL_LEN/2; WALL_HT = (G.th * S)/2;
+  WALL_LEN = G.wlen * S; HL = WALL_LEN/2; WALL_HT = (G.wth * S)/2;
   const x0 = (G.wmid - G.wspc/2), x1 = (G.wmid + G.wspc/2);
   WALL_X = [x0*S, x1*S];
   WALLS = [];
   for (const wx of WALL_X) {
     WALLS.push({cx: wx, cy: H - HL, hx: WALL_HT, hy: HL});
     WALLS.push({cx: wx, cy: HL,     hx: WALL_HT, hy: HL});
+  }
+  // slit tabs: short "tunnel" plates at the slit mouths, pointing into the
+  // corridor — the v3 pirouette blocker (mirrors the lips seen in Movie S1)
+  TABS = [];
+  const TL = G.tabLen * S, TD = G.tabDepth * S;
+  if (TL > 1e-6) {
+    const gapBot = WALL_LEN, gapTop = H - WALL_LEN;
+    WALL_X.forEach((wx, i) => {
+      const dir = (i === 0) ? 1 : -1;
+      const cx = wx + dir * (WALL_HT + TL/2);
+      for (const cy of [gapBot - TD/2, gapTop + TD/2]) {
+        const t = {cx: cx, cy: cy, hx: TL/2, hy: TD/2};
+        TABS.push(t); WALLS.push(t);
+      }
+    });
   }
   GOAL = [G.goalx * S, CONFIG.goal.pos[1] * S];
   GOAL_R = G.reach * S;
@@ -188,6 +208,10 @@ function draw(){
     ctx.fillRect(px(wx-WALL_HT), py(H),      2*WALL_HT*SCALE, (H-gapHi)*SCALE);
     ctx.fillRect(px(wx-WALL_HT), py(2*HL),   2*WALL_HT*SCALE, (2*HL)*SCALE);
   }
+  ctx.fillStyle='#4a3a55';
+  for (const t of TABS) {
+    ctx.fillRect(px(t.cx-t.hx), py(t.cy+t.hy), 2*t.hx*SCALE, 2*t.hy*SCALE);
+  }
   ctx.fillStyle='#2e8b2e';
   ctx.fillRect(px(GOAL[0])-5, py(GOAL[1])-5, 10, 10);
 
@@ -226,10 +250,13 @@ function draw(){
 function exportYaml(){
   const x0=(G.wmid-G.wspc/2), x1=(G.wmid+G.wspc/2);
   const r=(v,n=3)=>Number(v).toFixed(n);
-  return `# paste these into config.yaml (geometry edited in the sandbox)
+  return `# paste these into the config (geometry edited in the sandbox)
 walls:
   x_columns: [${r(x0)}, ${r(x1)}]   # spacing ${r(G.wspc)}
   length: ${r(G.wlen)}              # gap ${r(H/S - 2*G.wlen)}
+  thickness: ${r(G.wth)}
+  tab_len: ${r(G.tabLen)}           # v3 slit tabs (NOT in the env yet)
+  tab_depth: ${r(G.tabDepth)}
 
 tshape:
   stem_len: ${r(G.stem)}
@@ -248,10 +275,12 @@ function refreshYaml(){ document.getElementById('yaml').value = exportYaml(); }
 const SLIDERS = {
   sl_stem:'stem', sl_capb:'capB', sl_caps:'capS', sl_th:'th',
   sl_wlen:'wlen', sl_wspc:'wspc', sl_goalx:'goalx', sl_reach:'reach',
+  sl_tablen:'tabLen', sl_tabdep:'tabDepth',
 };
 const VALSPAN = {
   sl_stem:'v_stem', sl_capb:'v_capb', sl_caps:'v_caps', sl_th:'v_th',
   sl_wlen:'v_wlen', sl_wspc:'v_wspc', sl_goalx:'v_goalx', sl_reach:'v_reach',
+  sl_tablen:'v_tablen', sl_tabdep:'v_tabdep',
 };
 function syncSlidersFromG(){
   for(const [id,key] of Object.entries(SLIDERS)){
