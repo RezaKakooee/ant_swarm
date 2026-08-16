@@ -14,6 +14,9 @@ import numpy as np
 from loguru import logger
 from stable_baselines3.common.callbacks import BaseCallback
 
+from pose_curriculum import (PosePathCurriculumCallback,
+                             build_pose_path_curriculum)
+
 
 class SuccessTrajectoryCallback(BaseCallback):
     """Persist every SUCCESSFUL episode's trajectory to disk.
@@ -134,6 +137,7 @@ class SuccessTrajectoryCallback(BaseCallback):
             "actions": [np.asarray(a, dtype=float).ravel().tolist() for a in tr["act"]],
             "wall_len": float(info.get("wall_len", float("nan"))),  # curriculum stage / layout
             "gap": float(info.get("gap", float("nan"))),
+            "curriculum_stage": int(info.get("curriculum_stage", -1)),
             # metadata (derivable, kept for convenience/filtering):
             "length": length,
             "episode_return": ret,
@@ -178,8 +182,9 @@ class CurriculumCallback(BaseCallback):
       *where episodes begin*, giving the agent winnable starts so it ever sees the
       success signal; it still learns the maneuver itself.
 
-    Stall safety: a stage that doesn't reach ``success_threshold`` within
-    ``max_steps_per_stage`` is force-advanced (``None`` to disable).
+    Stalled stages are held indefinitely. ``max_steps_per_stage`` is retained
+    as a legacy name for the interval between hold-status log messages; elapsed
+    time never advances an unmastered stage.
     """
 
     def __init__(self, start, target, step, success_threshold, window,
@@ -196,7 +201,11 @@ class CurriculumCallback(BaseCallback):
         self.threshold = success_threshold
         self.window = window
         self.reach_radius = reach_radius
+        # Legacy name, now log-only: failed stages are never force-advanced.
         self.max_steps_per_stage = max_steps_per_stage
+        self.stall_log_steps = (None if max_steps_per_stage is None
+                                else max(int(max_steps_per_stage), 1))
+        self._next_stall_log_step = None
         self.stop_on_master = stop_on_master
         self.stop_success = stop_success
         self.current = self.start
@@ -208,6 +217,16 @@ class CurriculumCallback(BaseCallback):
 
     def _at_target(self) -> bool:
         return abs(self.current - self.target) < 1e-9
+
+    def prepare_env(self, training_env) -> None:
+        """Apply the initial stage before SB3 performs its first reset."""
+        if self.mode == "reverse" and self.wall_len_pin is not None:
+            training_env.env_method("set_wall_length", float(self.wall_len_pin))
+        if self.mode == "reverse":
+            training_env.env_method(
+                "set_spawn_x_range", self.current - self.band, self.current + self.band)
+        else:
+            training_env.env_method("set_wall_length", self.current)
 
     def _set_difficulty(self, value):
         if self.mode == "reverse":
@@ -230,6 +249,8 @@ class CurriculumCallback(BaseCallback):
                         f"({reason}) → {knob}={self.current:.3f}")
         self._stage_idx += 1
         self._stage_start_step = self.num_timesteps
+        self._next_stall_log_step = (None if self.stall_log_steps is None
+                                     else self.num_timesteps + self.stall_log_steps)
         self._eps_since_advance = 0
         self.success.clear()
 
@@ -238,6 +259,8 @@ class CurriculumCallback(BaseCallback):
             self.training_env.env_method("set_wall_length", float(self.wall_len_pin))
         self._set_difficulty(self.current)
         self._stage_start_step = self.num_timesteps
+        self._next_stall_log_step = (None if self.stall_log_steps is None
+                                     else self.num_timesteps + self.stall_log_steps)
         if self.verbose:
             knob = "spawn_x" if self.mode == "reverse" else "wall_len"
             logger.info(f"[curriculum:{self.mode}] start {knob}={self.current:.3f} "
@@ -270,10 +293,16 @@ class CurriculumCallback(BaseCallback):
             if len(self.success) >= self.window and self._eps_since_advance >= self.window \
                     and sr >= self.threshold:
                 self._do_advance(f"success {sr:.2f}")
-            # stall safety: stage took too long → force advance
-            elif (self.max_steps_per_stage is not None
-                  and self.num_timesteps - self._stage_start_step >= self.max_steps_per_stage):
-                self._do_advance(f"stall>{self.max_steps_per_stage} steps, sr={sr:.2f}")
+            # A failed stage is held. Time only triggers a status message.
+            elif (self._next_stall_log_step is not None
+                  and self.num_timesteps >= self._next_stall_log_step):
+                logger.warning(
+                    f"[curriculum] holding stage {self._stage_idx}: success {sr:.2f} "
+                    f"over {len(self.success)}/{self.window} episodes after "
+                    f"{self.num_timesteps - self._stage_start_step} steps"
+                )
+                elapsed = self.num_timesteps - self._next_stall_log_step
+                self._next_stall_log_step += (elapsed // self.stall_log_steps + 1) * self.stall_log_steps
 
         self.logger.record("curriculum/difficulty", self.current)   # wall_len or spawn_x
         if self.success:
@@ -281,12 +310,17 @@ class CurriculumCallback(BaseCallback):
         return True
 
 
-def build_curriculum(cur, reach_radius) -> CurriculumCallback:
+def build_curriculum(cur, reach_radius, cfg=None):
     """Construct a CurriculumCallback from the config's `curriculum:` section."""
     mode = getattr(cur, "mode", "gap")
+    if mode == "pose_path":
+        if cfg is None:
+            raise ValueError("pose_path curriculum requires the full environment config")
+        return build_pose_path_curriculum(cfg, cur, reach_radius)
     common = dict(
         success_threshold=cur.success_threshold, window=cur.window, reach_radius=reach_radius,
-        max_steps_per_stage=getattr(cur, "max_steps_per_stage", None),
+        max_steps_per_stage=getattr(
+            cur, "stall_log_steps", getattr(cur, "max_steps_per_stage", None)),
         stop_on_master=getattr(cur, "stop_on_master", False),
         stop_success=getattr(cur, "stop_success", 0.9),
         stop_window=getattr(cur, "stop_window", 200),
@@ -300,12 +334,37 @@ def build_curriculum(cur, reach_radius) -> CurriculumCallback:
         start=cur.start_wall_len, target=cur.target_wall_len, step=cur.step, **common)
 
 
-def pin_eval_hard(eval_env, cur):
+def prepare_curriculum(training_env, curriculum) -> None:
+    """Apply every curriculum before SB3's first reset."""
+    curriculum.prepare_env(training_env)
+
+
+def pin_eval_hard(eval_env, cur, curriculum=None):
     """Pin the eval env at the real hard task (so eval reflects true difficulty)."""
     mode = getattr(cur, "mode", "gap")
-    if mode == "reverse":
+    if mode == "pose_path":
+        if not isinstance(curriculum, PosePathCurriculumCallback):
+            raise ValueError("pose_path eval requires its constructed curriculum")
+        curriculum.prepare_env(eval_env, final=True)
+    elif mode == "reverse":
         band = getattr(cur, "spawn_band", 0.05)
         eval_env.env_method("set_wall_length", float(cur.reverse_wall_len))
         eval_env.env_method("set_spawn_x_range", cur.target_spawn_x - band, cur.target_spawn_x + band)
     else:
         eval_env.env_method("set_wall_length", float(cur.target_wall_len))
+
+
+
+def pin_standalone_eval_hard(env, cur, curriculum=None) -> None:
+    """Raw-Gym counterpart of :func:`pin_eval_hard`."""
+    mode = getattr(cur, "mode", "gap")
+    if mode == "pose_path":
+        if not isinstance(curriculum, PosePathCurriculumCallback):
+            raise ValueError("pose_path eval requires its constructed curriculum")
+        curriculum.prepare_raw_env(env, final=True)
+    elif mode == "reverse":
+        band = getattr(cur, "spawn_band", 0.05)
+        env.set_wall_length(float(cur.reverse_wall_len))
+        env.set_spawn_x_range(cur.target_spawn_x - band, cur.target_spawn_x + band)
+    else:
+        env.set_wall_length(float(cur.target_wall_len))

@@ -161,12 +161,24 @@ def main():
         dist[ok] = cand[ok] + 1
     print(f"fill done: {(dist == int(UNREACHED)).sum()} cells left unreachable", flush=True)
 
-    meta = dict(config=str(cfg_path or "config.yaml"),
-                walls_x=list(map(float, cfg.walls.x_columns)),
-                wall_len=float(cfg.walls.length),
-                goal=[gx, gy], goal_track=str(getattr(cfg.env, "goal_track", "center")))
+    meta = dict(
+        config=str(cfg_path or "config.yaml"),
+        scene_scale=float(cfg.scene_scale),
+        world=[float(cfg.world.width), float(cfg.world.height)],
+        walls_x=list(map(float, cfg.walls.x_columns)),
+        wall_len=float(cfg.walls.length),
+        wall_thickness=float(cfg.walls.thickness),
+        tshape={
+            "stem_len": float(cfg.tshape.stem_len),
+            "cap_big_len": float(cfg.tshape.cap_big_len),
+            "cap_small_len": float(cfg.tshape.cap_small_len),
+            "thickness": float(cfg.tshape.thickness),
+        },
+        goal=[gx, gy], reach_radius=float(lay.reach_radius),
+        goal_track=str(getattr(cfg.env, "goal_track", "center")))
     np.savez_compressed(
         out, dist=np.minimum(dist, int(UNREACHED)).astype(np.uint16),
+        reachable=reachable,
         norm=np.float64(norm),
         x0=xs[0], dx=np.float64(dx), y0=ys[0], dy=np.float64(dx),
         th0=np.float64(-180.0), dth=np.float64(dth),

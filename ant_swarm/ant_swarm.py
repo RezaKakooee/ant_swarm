@@ -67,8 +67,12 @@ class AntSwarmEnv(gym.Env):
         )
         self._prev_dist = 0.0
         self._pending_wall_len = None       # gap curriculum: applied on next reset
-        self._spawn_x_override = None       # reverse curriculum: spawn x-band
-        self._resample_each_reset = False   # reverse curriculum: fresh pose each episode
+        self._spawn_x_override = None       # legacy reverse curriculum: spawn x-band
+        self._spawn_pose_override = None    # pose-path curriculum: [x, y, theta]
+        self._spawn_pose_jitter = (0.0, 0.0)
+        self._curriculum_stage = -1
+        self._episode_curriculum_stage = -1
+        self._resample_each_reset = False   # curriculum: fresh pose each episode
         self.renderer = Renderer(self.cfg, self.layout)
 
     # ------------------------------------------------------------------
@@ -82,12 +86,52 @@ class AntSwarmEnv(gym.Env):
         return self.layout.wall_len
 
     def set_spawn_x_range(self, lo, hi):
-        """Reverse curriculum: spawn the T in x-band [lo, hi] (config units),
-        resampling a fresh pose each episode. Takes effect on next reset."""
+        """Legacy reverse curriculum: sample x, y and theta independently."""
         self._spawn_x_override = (float(lo), float(hi))
+        self._spawn_pose_override = None
+        self._curriculum_stage = -1
         self._resample_each_reset = True
 
+    def set_spawn_pose(self, pose, stage_idx=-1, xy_jitter=0.0, angle_jitter=0.0):
+        """Use a complete collision-free ``(x, y, theta)`` curriculum anchor."""
+        p = np.asarray(pose, dtype=np.float32).reshape(3)
+        self._spawn_pose_override = p
+        self._spawn_pose_jitter = (float(xy_jitter), float(angle_jitter))
+        self._curriculum_stage = int(stage_idx)
+        self._spawn_x_override = None
+        self._resample_each_reset = True
+        self._sample_anchor_pose()  # validate immediately, before training starts
+
+    def set_reward_mode(self, mode):
+        """Switch reward phase in place (used for geodesic -> sparse tuning)."""
+        self.cfg.env.reward_mode = str(mode)
+        self.reward_model = RewardModel(self.cfg)
+        if self.state.obj is not None:
+            self.reward_model.reset(self.state)
+
+    def _pose_is_free(self, center, angle):
+        probe = self.tshape.clone_at(center, angle)
+        c = probe.world_corners()
+        W, H = self.layout.world_size
+        return bool(c[:, 0].min() >= 0.0 and c[:, 0].max() <= W
+                    and c[:, 1].min() >= 0.0 and c[:, 1].max() <= H
+                    and not probe.overlaps_walls(self.layout))
+
+    def _sample_anchor_pose(self):
+        anchor = self._spawn_pose_override
+        xy_jitter, angle_jitter = self._spawn_pose_jitter
+        for _ in range(100):
+            center = anchor[:2] + self.rng.uniform(-xy_jitter, xy_jitter, size=2)
+            angle = float(anchor[2] + self.rng.uniform(-angle_jitter, angle_jitter))
+            if self._pose_is_free(center, angle):
+                return np.asarray(center, dtype=np.float32), angle
+            if xy_jitter == 0.0 and angle_jitter == 0.0:
+                break
+        raise ValueError(f"curriculum anchor is not collision-free: {anchor.tolist()}")
+
     def _sample_spawn(self):
+        if self._spawn_pose_override is not None:
+            return self._sample_anchor_pose()
         x_range = self._spawn_x_override or self.cfg.spawn.x_range
         return sample_free_pose(
             self.tshape, self.layout, self.rng,
@@ -115,6 +159,7 @@ class AntSwarmEnv(gym.Env):
         self._apply_pending()
         if self._resample_each_reset:                  # reverse curriculum: fresh start each episode
             self.init_center, self.init_angle = self._sample_spawn()
+        self._episode_curriculum_stage = self._curriculum_stage
         self.state.reset(self.init_center, self.init_angle)
         self._prev_dist = self.state.distance_to_goal()
         self.reward_model.reset(self.state)      # geodesic mode re-anchors its potential
@@ -145,6 +190,10 @@ class AntSwarmEnv(gym.Env):
             "step": self.state.step_count,
             "wall_len": self.layout.wall_len,   # current difficulty (curriculum)
             "gap": self.layout.gap,
+            "is_success": bool(reached),
+            "curriculum_stage": self._episode_curriculum_stage,
+            "spawn_pose": [float(self.init_center[0]), float(self.init_center[1]),
+                           float(self.init_angle)],
         }
         return self.obs_model.observe(self.state), reward, terminated, truncated, info
 

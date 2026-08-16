@@ -109,7 +109,8 @@ corners are clamped `boundary_margin` (0.025) inside, with `restitution_bound`
 
 ## Observation space
 
-`Box(-1, 1, shape=(n_ants, 25))`. Per ant, 9 base + 16 barrier floats:
+Dynamic mode uses `Box(-1, 1, shape=(n_ants, 27))`; kinematic mode and
+`env.observe_linear_velocity: false` use the legacy 25-float shape.
 
 | # | Feature | Notes |
 |---|---|---|
@@ -118,7 +119,8 @@ corners are clamped `boundary_margin` (0.025) inside, with `restitution_bound`
 | 4–5 | goal − tracked point (dx, dy) | measured from the goal-tracked point, normalised |
 | 6–7 | sin(angle), cos(angle) | T orientation |
 | 8 | angular velocity | clipped ±1 at 0.05 rad/step |
-| 9–24 | tip→head distances | 4 T arm tips (big-cap top/bottom, small-cap top/bottom) × 4 wall heads, row-major, ÷ world diagonal |
+| 9–10 | linear velocity (world x, y) | dynamic mode only; clipped ±1 at theoretical full-push steady speed |
+| 11–26 | tip→head distances | 4 T arm tips (big-cap top/bottom, small-cap top/bottom) × 4 wall heads, row-major, ÷ world diagonal |
 
 The barrier block is identical across ants (it depends only on the T pose); it
 gives a sharp "arm about to clip a wall corner" cue that the threading maneuver

@@ -80,7 +80,7 @@ curriculum:
   mode: reverse               # gap = widen->narrow barrier | reverse = move spawn goal->full
   success_threshold: 0.7      # advance when rolling success rate >= this
   window: 100                 # episodes in the success-rate window
-  max_steps_per_stage: 2000000  # stall safety: force-advance if a stage drags this long (null = off)
+  max_steps_per_stage: 2000000  # stall log interval only; failed stages never advance (null = off)
   # early stopping: stop once the HARD target is mastered for a sustained window
   stop_on_master: true
   stop_success: 0.9             # stop when success >= this ...
@@ -125,11 +125,13 @@ ppo:
   clip_range: 0.2
   learning_rate: 0.0003
   # --- exploration ---
-  ent_coef: 0.05            # entropy bonus (primary exploration knob)
-  ent_coef_final: 0.005      # set a float to linearly anneal ent_coef -> this over training
-  use_sde: true            # gSDE: temporally-correlated (coherent) exploration
-  sde_sample_freq: 16       # resample gSDE noise every N steps (only if use_sde)
-  log_std_init: 0.5         # initial action-distribution log-std; raise (~0.5) to widen
+  ent_coef: 0.001            # entropy bonus (primary exploration knob)
+  ent_coef_final: 0.0      # set a float to linearly anneal ent_coef -> this over training
+  use_sde: false            # gSDE: temporally-correlated (coherent) exploration
+  sde_sample_freq: -1       # resample gSDE noise every N steps (only if use_sde)
+  log_std_init: -1.0         # initial action-distribution log-std; raise (~0.5) to widen
+  log_std_min: -3.0
+  log_std_max: -0.5
 
 # SAC hyperparameters (read by train_sac.py).
 sac:

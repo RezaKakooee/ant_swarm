@@ -95,11 +95,13 @@ ppo:
   gae_lambda: 0.95
   clip_range: 0.2
   learning_rate: 0.0003
-  ent_coef: 0.05
-  ent_coef_final: 0.005
-  use_sde: true
-  sde_sample_freq: 16
-  log_std_init: 0.5
+  ent_coef: 0.001
+  ent_coef_final: 0.0
+  use_sde: false
+  sde_sample_freq: -1
+  log_std_init: -1.0
+  log_std_min: -3.0
+  log_std_max: -0.5
 sac:
   timesteps: 15000000
   buffer_size: 1000000

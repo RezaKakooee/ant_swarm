@@ -12,7 +12,8 @@ Three modes (config ``env.reward_mode``):
     where phi = normalised BFS distance-to-goal along collision-free motions
     (see ``gen_geodesic_field.py``). Unlike Euclidean distance this decreases
     monotonically along the true solution path, so rotations and detours that
-    make real progress are rewarded. Potential-based -> policy-invariant.
+    make real progress are rewarded. This is a pretraining signal; sparse
+    fine-tuning restores the exact terminal objective.
     Config: ``env.geodesic_field`` = .npz path (relative to project root).
     The field is tied to ONE wall geometry — safe with the reverse curriculum
     (fixed walls), NOT with the gap curriculum.
@@ -21,37 +22,7 @@ Three modes (config ``env.reward_mode``):
 """
 from __future__ import annotations
 
-import math
-from pathlib import Path
-
-_ROOT = Path(__file__).resolve().parent.parent
-
-
-class _GeoField:
-    """Nearest-cell lookup into a precomputed (theta, y, x) distance field."""
-
-    def __init__(self, path: str | Path):
-        import numpy as np
-        p = Path(path)
-        if not p.is_absolute():
-            p = _ROOT / p
-        z = np.load(p)
-        d = z["dist"].astype(np.float32)
-        self.norm = float(z["norm"])
-        d[d >= 65500.0] = self.norm * 1.2          # unreachable → worse than any real pose
-        self.d = d / self.norm                     # phi in ~[0, 1.2]
-        self.x0, self.dx = float(z["x0"]), float(z["dx"])
-        self.y0, self.dy = float(z["y0"]), float(z["dy"])
-        self.th0, self.dth = float(z["th0"]), float(z["dth"])  # degrees
-        self.nth, self.ny, self.nx = self.d.shape
-
-    def phi(self, x: float, y: float, angle: float) -> float:
-        deg = math.degrees(angle)
-        deg = (deg - self.th0) % 360.0
-        i = int(round(deg / self.dth)) % self.nth
-        j = min(max(int(round((y - self.y0) / self.dy)), 0), self.ny - 1)
-        k = min(max(int(round((x - self.x0) / self.dx)), 0), self.nx - 1)
-        return float(self.d[i, j, k])
+from .geodesic import PoseGeodesicField
 
 
 class RewardModel:
@@ -61,7 +32,8 @@ class RewardModel:
         self.success = cfg.env.reward_success
         self._prev_phi = 0.0
         if self.mode == "geodesic":
-            self.geo = _GeoField(cfg.env.geodesic_field)
+            self.geo = PoseGeodesicField(cfg.env.geodesic_field)
+            self.geo.validate_config(cfg)
             self.geo_coef = float(getattr(cfg.env, "reward_geodesic_coef", 1.0))
 
     # ------------------------------------------------------------------

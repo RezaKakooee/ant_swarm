@@ -25,12 +25,13 @@ python scripts/rl/train_sac.py --config-name pnas_dyn_geo_v2 run.wandb=false sac
 python scripts/rl/train_sac.py --config-name pnas_dyn_geo_v2
 ```
 
-Without SLURM, run directly (nohup/tmux); with SLURM, adapt the partition
-lines at the top of `ops/sb_train.sh`.
+Without SLURM, use `ops/local_train.sh`; it accepts the same arguments as the
+SLURM wrapper, runs detached, and writes to the same log directory.
 
 ```
 ops/
 ├── sb_train.sh            # SLURM training job (a100, 1 day) — the main launcher
+├── local_train.sh         # detached local/Azure equivalent (same arguments)
 ├── fsrun.sh               # interactive srun shell on a compute node
 ├── py_runner.sh           # nohup-run python scripts on the login node (survives logout)
 ├── render_success.sh      # nohup wrapper for scripts/il/render_success.py
@@ -78,6 +79,25 @@ python scripts/rl/train_sac.py --config-name pnas_kin_geo \
     run.wandb=false sac.timesteps=50000
 ```
 
+## Train on Azure / without SLURM
+
+```bash
+# These return immediately; training continues after terminal/SSH disconnects.
+ops/local_train.sh train_sac
+ops/local_train.sh train_sac configs/rl/pnas_kin_geo.yaml
+ops/local_train.sh train_sac configs/rl/pnas_kin_geo.yaml sac.timesteps=5e6
+
+# The command prints the exact log path, PID, and stop command. Monitor with:
+tail -f storage_local/sci_out/<run_id>.out
+```
+
+The runner uses the `roboverse` Conda environment by default. Override it for
+one invocation with, for example:
+
+```bash
+ANT_SWARM_CONDA_ENV=ant_swarm ops/local_train.sh train_sac ...
+```
+
 ## Monitor
 
 ```bash
@@ -95,8 +115,12 @@ What to watch: `curriculum/difficulty` should walk toward its target
 ## Evaluate a checkpoint
 
 ```bash
-python scripts/rl/train_sac.py --config-name pnas_kin_geo \
-    run.eval=true run.eval_model=storage_local/<run>/checkpoints/best/best_model.zip
+# Standalone evaluation with automatic GIF and MP4 recording:
+python scripts/rl/evaluate.py storage_local/<run> --episodes 5
+
+# Or via train_sac:
+python scripts/rl/train_sac.py --config-name pnas_dyn_geo_v2 \
+    run.eval=true run.eval_model=storage_local/<run>/checkpoints/best/best_model.zip run.eval_episodes=5
 ```
 
 ## Watch what was learned

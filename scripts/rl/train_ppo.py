@@ -22,8 +22,10 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from ant_swarm import (AntSwarmEnv, build_run_id, load_config_cli,  # noqa: E402
                        save_code, setup_logging)
+from exploration import LogStdClampCallback  # noqa: E402
 from train_utils import (SuccessTrajectoryCallback, build_curriculum,  # noqa: E402
-                         pin_eval_hard)
+                         pin_eval_hard, pin_standalone_eval_hard,
+                         prepare_curriculum)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STORAGE_DIR  = PROJECT_ROOT / "storage_local"
@@ -32,14 +34,15 @@ STORAGE_DIR  = PROJECT_ROOT / "storage_local"
 RUN_DEFAULTS = dict(
     wandb=True, render_freq=500_000, init_from=None,
     eval=False, eval_model=None, eval_episodes=20,
+    eval_render=True, eval_render_dir=None, eval_fps=30, eval_deterministic=True,
     save_successes=True, dedup_successes=True, dedup_tol=0.05,
 )
 PPO_DEFAULTS = dict(
     timesteps=50_000_000, n_envs=8,
     n_steps=4096, batch_size=512, n_epochs=10, gamma=0.99, gae_lambda=0.95,
     clip_range=0.2, learning_rate=3e-4,
-    ent_coef=0.05, ent_coef_final=None, use_sde=False, sde_sample_freq=16,
-    log_std_init=0.0,
+    ent_coef=0.001, ent_coef_final=0.0, use_sde=False, sde_sample_freq=16,
+    log_std_init=-1.0, log_std_min=-3.0, log_std_max=-0.5,
 )
 
 
@@ -108,13 +111,21 @@ def _make_run_dir(run_name: str) -> Path:
 class RenderCallback(BaseCallback):
     """Roll out one deterministic episode every ``render_freq`` steps and save a GIF."""
 
-    def __init__(self, cfg, render_freq: int, save_dir: str | Path, fps: int = 30, seed: int = 0):
+    def __init__(self, cfg, render_freq: int, save_dir: str | Path, fps: int = 30,
+                 seed: int = 0, pose=None, wall_len=None):
         super().__init__()
         self.cfg = cfg
         self.render_freq = render_freq
         self.save_dir = Path(save_dir)
         self.fps = fps
         self.seed = seed
+        self.pose = None if pose is None else np.asarray(pose, dtype=np.float32)
+        self.wall_len = None if wall_len is None else float(wall_len)
+
+    def pin_pose(self, pose, wall_len=None) -> None:
+        """Render every policy check from one canonical hard pose."""
+        self.pose = np.asarray(pose, dtype=np.float32)
+        self.wall_len = None if wall_len is None else float(wall_len)
 
     def _on_step(self) -> bool:
         if self.n_calls % self.render_freq == 0:
@@ -126,6 +137,10 @@ class RenderCallback(BaseCallback):
         from matplotlib.animation import FuncAnimation, PillowWriter
 
         env = AntSwarmEnv(config=self.cfg, seed=self.seed)
+        if self.wall_len is not None:
+            env.set_wall_length(self.wall_len)
+        if self.pose is not None:
+            env.set_spawn_pose(self.pose)
         flat_env = FlattenObservation(env)
         obs, _ = flat_env.reset(seed=self.seed)
 
@@ -200,7 +215,8 @@ def train(cfg, s):
     logger.info(f"Run name  : {run_name}")
     logger.info(f"Run dir   : {run_dir}")
     logger.info(f"Exploration: ent_coef={s['ent_coef']} anneal->{s['ent_coef_final']} "
-                f"use_sde={s['use_sde']} log_std_init={s['log_std_init']}")
+                f"use_sde={s['use_sde']} log_std_init={s['log_std_init']} "
+                f"log_std_bounds=[{s['log_std_min']}, {s['log_std_max']}]")
 
     # --- wandb ---
     wandb_run = None
@@ -235,6 +251,9 @@ def train(cfg, s):
         logger.info(f"Warm-started from: {s['init_from']}")
 
     reach = cfg.goal.reach_radius
+    render_callback = RenderCallback(
+        cfg=cfg, render_freq=max(s["render_freq"] // s["n_envs"], 1),
+        save_dir=rend_dir, fps=30, seed=0)
     callbacks = [
         CheckpointCallback(save_freq=max(50_000 // s["n_envs"], 1),
                            save_path=str(ckpt_dir), name_prefix="ppo"),
@@ -242,10 +261,12 @@ def train(cfg, s):
                      log_path=str(ckpt_dir / "eval_logs"),
                      eval_freq=max(20_000 // s["n_envs"], 1),
                      n_eval_episodes=10, deterministic=True, verbose=1),
-        RenderCallback(cfg=cfg, render_freq=max(s["render_freq"] // s["n_envs"], 1),
-                       save_dir=rend_dir, fps=30, seed=0),
+        render_callback,
         EpisodeMetricsCallback(reach_radius=reach),
     ]
+    if s["log_std_min"] is not None or s["log_std_max"] is not None:
+        callbacks.append(LogStdClampCallback(
+            min_log_std=s["log_std_min"], max_log_std=s["log_std_max"]))
     if s["save_successes"]:
         callbacks.append(SuccessTrajectoryCallback(
             save_dir=run_dir / "successes", reach_radius=reach,
@@ -260,8 +281,12 @@ def train(cfg, s):
     # optional curriculum (gap or reverse); eval held at the real hard task
     cur = getattr(cfg, "curriculum", None)
     if cur is not None and getattr(cur, "enabled", False):
-        callbacks.append(build_curriculum(cur, reach))
-        pin_eval_hard(eval_env, cur)
+        curriculum = build_curriculum(cur, reach, cfg=cfg)
+        prepare_curriculum(vec_env, curriculum)
+        if getattr(cur, "mode", "gap") == "pose_path":
+            render_callback.pin_pose(curriculum.anchors[-1], curriculum.wall_len)
+        callbacks.append(curriculum)
+        pin_eval_hard(eval_env, cur, curriculum)
         logger.info(f"Curriculum mode: {getattr(cur, 'mode', 'gap')}  "
                     f"(reward_mode={getattr(cfg.env, 'reward_mode', 'shaped')})")
 
@@ -278,31 +303,138 @@ def train(cfg, s):
         wandb_run.finish()
 
 
+def _resolve_eval_model_path(path_str: str | Path) -> tuple[Path, Path]:
+    """Resolve checkpoint path and experiment directory."""
+    path = Path(str(path_str)).expanduser()
+    if not path.is_absolute():
+        path = (PROJECT_ROOT / path).resolve()
+    if path.is_dir():
+        exp_dir = path
+        candidates = [
+            path / "checkpoints" / "best" / "best_model.zip",
+            path / "checkpoints" / "ppo_final.zip",
+            path / "best" / "best_model.zip",
+            path / "best_model.zip",
+            path / "ppo_final.zip",
+        ]
+        for c in candidates:
+            if c.is_file():
+                return c, exp_dir
+        zips = sorted((path / "checkpoints").glob("*.zip"))
+        if zips:
+            return zips[-1], exp_dir
+        raise FileNotFoundError(f"No checkpoint .zip found in {path}")
+    
+    exp_dir = path.parent
+    if exp_dir.name in ("best", "eval_logs"):
+        exp_dir = exp_dir.parent
+    if exp_dir.name == "checkpoints":
+        exp_dir = exp_dir.parent
+    return path, exp_dir
+
+
+def _save_eval_gif(frames: list[np.ndarray], out_path: Path, fps: int = 30):
+    import matplotlib.pyplot as plt
+    from matplotlib.animation import FuncAnimation, PillowWriter
+    h, w = frames[0].shape[:2]
+    fig, ax = plt.subplots(figsize=(6.5, 6.5 * h / w))
+    im = ax.imshow(frames[0])
+    ax.set_axis_off()
+    anim = FuncAnimation(fig, lambda i: [im.set_data(frames[i]) or im],
+                         frames=len(frames), interval=1000 / fps, blit=True)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    anim.save(str(out_path), writer=PillowWriter(fps=fps))
+    plt.close(fig)
+
+
+def _save_eval_mp4(frames: list[np.ndarray], out_path: Path, fps: int = 30):
+    try:
+        import cv2
+        h, w = frames[0].shape[:2]
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        vw = cv2.VideoWriter(str(out_path), fourcc, fps, (w, h))
+        for f in frames:
+            vw.write(cv2.cvtColor(f, cv2.COLOR_RGB2BGR))
+        vw.release()
+    except Exception as e:
+        logger.warning(f"Could not save MP4: {e}")
+
+
 def evaluate(cfg, s):
     if not s["eval_model"]:
-        raise SystemExit("Set run.eval_model in config.yaml to a checkpoint .zip")
-    env = FlattenObservation(AntSwarmEnv(config=cfg, seed=42))
-    model = PPO.load(s["eval_model"], env=env)
+        raise SystemExit("Set run.eval_model in config.yaml to a checkpoint .zip or experiment dir")
+    
+    model_file, exp_dir = _resolve_eval_model_path(s["eval_model"])
+    logger.info(f"Evaluating checkpoint: {model_file}")
+    logger.info(f"Experiment dir       : {exp_dir}")
+
+    # Use run's snapshot config if available to guarantee matching geometry
+    snap_cfg_path = exp_dir / "code" / "config.yaml"
+    if snap_cfg_path.is_file():
+        from ant_swarm import load_config
+        logger.info(f"Using snapshot config from: {snap_cfg_path}")
+        cfg = load_config(snap_cfg_path)
+
     reach = cfg.goal.reach_radius
+    raw_env = AntSwarmEnv(config=cfg, seed=42)
+    cur = getattr(cfg, "curriculum", None)
+    if cur is not None and getattr(cur, "enabled", False):
+        curriculum = build_curriculum(cur, reach, cfg=cfg)
+        pin_standalone_eval_hard(raw_env, cur, curriculum)
+    env = FlattenObservation(raw_env)
+    model = PPO.load(str(model_file), env=env)
+
+    render_eval = bool(s.get("eval_render", True))
+    eval_dir = Path(s["eval_render_dir"]) if s.get("eval_render_dir") else (exp_dir / "eval")
+    if render_eval:
+        eval_dir.mkdir(parents=True, exist_ok=True)
+
+    fps = int(s.get("eval_fps", 30))
+    det = bool(s.get("eval_deterministic", True))
+    n_episodes = int(s.get("eval_episodes", 5))
 
     returns, lengths, successes = [], [], []
-    for ep in range(s["eval_episodes"]):
+    for ep in range(n_episodes):
         obs, _ = env.reset()
+        frames = [raw_env.render()] if render_eval else []
         total_r, done = 0.0, False
         while not done:
-            action, _ = model.predict(obs, deterministic=True)
+            action, _ = model.predict(obs, deterministic=det)
             obs, reward, terminated, truncated, info = env.step(action)
+            if render_eval:
+                frames.append(raw_env.render())
             total_r += reward
             done = terminated or truncated
+        
+        step_count = info.get("step", len(frames) - 1 if render_eval else 0)
+        final_d = info.get("object_distance", float("nan"))
+        succ = bool(final_d < reach)
         returns.append(total_r)
-        lengths.append(info["step"])
-        successes.append(info.get("object_distance", 1.0) < reach)
-        print(f"  ep {ep+1:3d}  return={total_r:.2f}  steps={info['step']}  "
-              f"dist={info.get('object_distance', float('nan')):.3f}")
+        lengths.append(step_count)
+        successes.append(succ)
 
-    print(f"\nmean return : {np.mean(returns):.2f} ± {np.std(returns):.2f}")
-    print(f"mean steps  : {np.mean(lengths):.0f}")
-    print(f"success rate: {np.mean(successes)*100:.1f}%")
+        log_msg = f"  ep {ep+1:3d}  return={total_r:.2f}  steps={step_count}  dist={final_d:.3f}  success={succ}"
+        print(log_msg)
+        logger.info(log_msg)
+
+        if render_eval and frames:
+            gif_out = eval_dir / f"eval_ep{ep+1:02d}_len{step_count}.gif"
+            mp4_out = eval_dir / f"eval_ep{ep+1:02d}_len{step_count}.mp4"
+            _save_eval_gif(frames, gif_out, fps=fps)
+            _save_eval_mp4(frames, mp4_out, fps=fps)
+            logger.info(f"       Saved video → {gif_out} ({len(frames)} frames)")
+
+    summary_str = (
+        f"\nEvaluation summary ({n_episodes} episodes):\n"
+        f"  mean return : {np.mean(returns):.2f} ± {np.std(returns):.2f}\n"
+        f"  mean steps  : {np.mean(lengths):.0f}\n"
+        f"  success rate: {np.mean(successes)*100:.1f}%\n"
+    )
+    if render_eval:
+        summary_str += f"  videos dir  : {eval_dir}\n"
+    print(summary_str)
+    logger.info(summary_str)
 
 
 def main():

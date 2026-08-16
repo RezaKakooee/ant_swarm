@@ -106,10 +106,12 @@ ants distribute around a load's rim.
 
 ## Observation design
 
-Per ant, 25 floats in ~[-1, 1]: 9 base features (own attachment offset, T
-centre, goal vector *measured from the goal-tracked point*, sin/cos orientation,
-angular velocity) + a 16-float **barrier block**: distances from the T's 4 arm
-tips (big-cap top/bottom, small-cap top/bottom) to the 4 wall heads.
+Per ant, dynamic mode exposes 27 floats in ~[-1, 1]. The first 9 are the legacy
+base features (own attachment offset, T centre, goal vector *measured from the
+goal-tracked point*, sin/cos orientation, angular velocity), followed by 2
+world-frame linear-velocity components and a 16-float **barrier block**:
+distances from the T's 4 arm tips (big-cap top/bottom, small-cap top/bottom) to
+the 4 wall heads.
 
 The barrier block is the important design decision. Earlier training failed
 with a policy that never rotated near the gap: the fixed layout was not in the
@@ -119,9 +121,10 @@ be conditioned on. The block depends only on the T pose and is therefore shared
 across ants; only the attachment offset differs per row, which is what a future
 parameter-shared multi-agent policy would key on.
 
-Known remaining gap (deliberate, documented in the design notes): **linear
-velocity is not observed** — genuine partial observability under dynamic mode,
-listed as the next candidate feature if learning stalls.
+Linear velocity is normalised by the theoretical steady speed under aligned
+full-strength pushes, so the policy can distinguish momentum from new control
+input. Kinematic mode, which has no momentum, keeps the 25-float layout. Set
+`env.observe_linear_velocity: false` for compatibility with old checkpoints.
 
 ## Reward and the anti-cheat
 
@@ -153,15 +156,18 @@ seen from the full task. Two curricula (config `curriculum:`, executed by
   almost immediate), then the spawn band slides left toward the real start as
   success accumulates. The reward is never modified — only where episodes
   begin.
+* **`pose_path`** (canonical dynamic task) — keep the hard maze fixed and move
+  through complete `(x, y, theta)` anchors taken from one collision-free
+  geodesic solution path.
 
-In both modes the **eval env is pinned at the full hard task**, so eval metrics
-always measure the real objective; a stall-safety cap force-advances a stuck
-stage, and training stops early once the target is mastered
+In every mode the **eval env is pinned at the full hard task**, so eval metrics
+always measure the real objective. A stalled stage is held and logged but never
+force-advanced; training stops early only once the target is mastered
 (`stop_success` over `stop_window` episodes).
 
 ## Training stack (outside the env package)
 
-PPO (`scripts/rl/train_ppo.py`, 8 envs, gSDE + entropy annealing) and SAC
+PPO (`scripts/rl/train_ppo.py`, 8 envs, bounded log-std + entropy annealing) and SAC
 (`scripts/rl/train_sac.py`, single env) via stable-baselines3, both with:
 
 * checkpoints + best-model eval, policy GIFs (disk/TensorBoard/W&B),
@@ -184,7 +190,7 @@ PPO (`scripts/rl/train_ppo.py`, 8 envs, gSDE + entropy annealing) and SAC
   meaning: switching `motion.mode`, changing `ants.n`, past obs-layout changes,
   and the `goal_track` switch (same shapes, different objective — retrain).
 * In `kinematic` mode the ants are cosmetic (one centralized command regardless
-  of `n`) and the `ang_vel` observation is always 0.
+  of `n`); `ang_vel` is always 0 and the linear-velocity block is omitted.
 * The SB3 setup is a **centralized** controller even for `n ≥ 2` (obs flattened,
   one network emits all ants' actions). Decentralized per-ant policies — the
   actual ant setting — are future work the per-ant observation rows already

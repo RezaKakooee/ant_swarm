@@ -79,6 +79,9 @@ python scripts/il/render_success.py storage_local/<run>/successes/success_*.json
 sbatch ops/sb_train.sh train_sac
 sbatch ops/sb_train.sh train_sac configs/rl/pnas_kin_geo.yaml
 sbatch ops/sb_train.sh train_sac configs/rl/pnas_kin_geo.yaml sac.timesteps=5e6
+
+# Azure/local machine without SLURM (detached, same arguments and log format)
+ops/local_train.sh train_sac configs/rl/pnas_kin_geo.yaml sac.timesteps=5e6
 ```
 
 Or use the env directly:
