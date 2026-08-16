@@ -122,6 +122,12 @@ Two numbers decide everything:
 Together they leave one family of solutions: **big head in → turn in the middle
 → small head out**. Exactly what the ants do.
 
+![The maze and its key dimensions](figures/maze_geometry.png)
+
+*The load at its start pose, and the same load tilted while threading the first
+slit. The two arrows that matter: the big head is wider than the slit, and the
+middle chamber is shorter than the load.*
+
 ### Action — two motion modes
 
 **Kinematic** (simple, no physics): one command for the whole T.
@@ -253,6 +259,13 @@ which ones are collision-free:
 - The passage through a slit is a **thin diagonal channel** in that space.
 - Its clearance is about **2.5 mm**. Make the walls 3 mm thicker and the maze
   becomes **impossible**.
+
+![The legal poses, at four fixed angles](figures/config_space.png)
+
+*Each panel fixes the load's angle and shows where its centre may sit: white is
+legal, black collides. We tested every angle — at **no fixed angle** can the
+load get from the left room to the right room. Turning is not an optimisation
+here; it is the only way through.*
 
 So random exploration has to find a channel a few millimetres wide, in a 3-D
 space, by luck — and then follow it in the right order for about 150 steps. It
@@ -391,6 +404,13 @@ Now the reward is honest:
 - Poking the small head into the dead end → the route number **jumps up** →
   negative reward. **The trap punishes itself.**
 
+![Straight-line distance vs route distance](figures/reward_euclidean_vs_geodesic.png)
+
+*The same maze, two ideas of "how far is the goal". On the left the colour
+flows smoothly through the walls, as if they were not there — that is the
+reward that failed. On the right the whole left room is far away, and the
+value only improves through the slit — that is the reward that worked.*
+
 And it is safe: this is potential-based shaping, which provably cannot change
 which policy is best. It only makes the good one easier to find.
 
@@ -423,6 +443,13 @@ back than the stage before. No more useless random poses. And a stage advances
 **only** when the agent truly masters it (90% success over 100 episodes) —
 never because time ran out.
 
+![The 16 curriculum stages](figures/curriculum_anchors.png)
+
+*The 16 training stages, drawn as the load itself. Read it from dark blue
+(stage 0, almost at the goal) to dark red (stage 15, the real start) and you
+are reading the solution backwards — including the turn in the middle room.
+The agent practises this sequence in reverse order.*
+
 This is also what finally killed the pirouette: the agent only ever practises
 the canonical route, so that is the maneuver it learns.
 
@@ -449,10 +476,11 @@ and the policy could finally brake and correct for drift.
 **100% success, mastered at 247,519 steps** — about two hours on one machine,
 and **56× fewer steps** than the 14-million-step run that learned nothing.
 
-![Final policy, 5 episodes](../storage_local/ant__20260814_1230__local-1427853__train_sac__pnas_dyn_geo_v2__best/eval/eval_all_5episodes_grid.gif)
+![The solved task](../storage_local/ant__20260814_1230__local-1427853__train_sac__pnas_dyn_geo_v2__best/eval/eval_ep01_len153_ret1.76.gif)
 
-*Five independent evaluation episodes from the real start. All solved, about
-153 steps each.*
+*One evaluation episode, from the real start pose: big head into the first
+slit, turn in the middle room, small head out of the second. 153 steps. Four
+more episodes were run and all of them look like this one.*
 
 Then the real test. A score of 100% is not enough — we wanted to know **what**
 the agent actually does. So we replayed the last 25 saved solutions and measured
