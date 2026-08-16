@@ -31,7 +31,7 @@ and move". Anyone who has carried a sofa through a doorway knows it.
 
 ## 2. Try it yourself (2 minutes)
 
-Reading about it is not the same as feeling it. So we built a small browser
+Reading about it is not the same as feeling it. So I built a small browser
 sandbox of the exact same maze. No install, no Python.
 
 ```bash
@@ -103,13 +103,13 @@ what this task is about.
 Sizes come from the paper's SI Table S1, plus measurements taken from the
 experiment videos.
 
-| Part | Size |
-|---|---|
-| Slit opening | **0.150** |
-| T big head | **0.175** |
-| T small head | 0.087 |
-| T total length | 0.359 |
-| Middle chamber depth | 0.221 |
+| Part                 | Size            |
+| -------------------- | --------------- |
+| Slit opening         | **0.150** |
+| T big head           | **0.175** |
+| T small head         | 0.087           |
+| T total length       | 0.359           |
+| Middle chamber depth | 0.221           |
 
 Two numbers decide everything:
 
@@ -144,13 +144,13 @@ action per ant = [ push angle,  magnitude ]      (+ spin, for a single agent)
 All forces are summed into one force and one torque, and the load moves as a
 rigid body:
 
-| Physics | Value |
-|---|---|
-| Mass | 0.5 |
-| Moment of inertia | 0.01 |
-| Linear friction | 0.96 |
-| Angular friction | 0.94 |
-| Substeps per env step | 10 |
+| Physics               | Value |
+| --------------------- | ----- |
+| Mass                  | 0.5   |
+| Moment of inertia     | 0.01  |
+| Linear friction       | 0.96  |
+| Angular friction      | 0.94  |
+| Substeps per env step | 10    |
 
 This mode has **momentum**. The load drifts, overshoots, and bounces off walls.
 It is much harder to control — and much closer to the real thing.
@@ -163,14 +163,14 @@ applies torque directly.)
 
 Each ant sees 25 numbers:
 
-| Block | Count | Meaning |
-|---|---|---|
-| Attachment offset | 2 | where this ant holds the load |
-| Load position | 2 | where the T is |
-| Goal vector | 2 | from the tracked point to the goal |
-| Orientation | 2 | sin θ, cos θ |
-| Angular velocity | 1 | how fast it spins |
-| Tip → slit-corner distances | 16 | 4 arm tips × 4 slit corners |
+| Block                        | Count | Meaning                            |
+| ---------------------------- | ----- | ---------------------------------- |
+| Attachment offset            | 2     | where this ant holds the load      |
+| Load position                | 2     | where the T is                     |
+| Goal vector                  | 2     | from the tracked point to the goal |
+| Orientation                  | 2     | sin θ, cos θ                     |
+| Angular velocity             | 1     | how fast it spins                  |
+| Tip → slit-corner distances | 16    | 4 arm tips × 4 slit corners       |
 
 That last block is a design decision worth explaining. Early policies never
 rotated near the slit — because the walls were **not in the observation at
@@ -224,12 +224,12 @@ It pushes the load against the wall and stays there until the episode ends.*
 
 We ran the variations. All of them failed:
 
-| Run | Steps | Result |
-|---|---|---|
-| PPO dynamic, shaped reward | 14.06M | 0% |
-| PPO dynamic, sparse reward | 13.21M | 0% |
-| SAC dynamic, sparse reward | 2.94M | 0% |
-| SAC dynamic, geodesic reward (section 8) | 2.77M | stuck at 60% |
+| Run                                      | Steps  | Result       |
+| ---------------------------------------- | ------ | ------------ |
+| PPO dynamic, shaped reward               | 14.06M | 0%           |
+| PPO dynamic, sparse reward               | 13.21M | 0%           |
+| SAC dynamic, sparse reward               | 2.94M  | 0%           |
+| SAC dynamic, geodesic reward (section 8) | 2.77M  | stuck at 60% |
 
 Sadly, the simple approach does not solve this maze — not with sparse reward,
 and not with shaped reward either.
@@ -278,6 +278,14 @@ of the T, the agent learned to poke the **small head** through the slits,
 because the small head fits anywhere. It scored well while never doing the real
 maneuver.
 
+![The small-head cheat](../storage_local/ant__20260601_1714__13102512__train_sac__single/success_gifs/cheat_smallhead.gif)
+
+*A "94% success" policy from that era, at the full narrow gap. Look at which
+end leads: the small head goes first through both slits, and the big head never
+enters. The load simply slides through sideways. We checked the last 12
+solutions of that run — 12 out of 12 did this. The score was real; the
+behaviour was not what we wanted.*
+
 **Fix:** measure the distance from the **centre of the big head**. Now the big
 head has to arrive at the goal, so leading with the small end earns nothing. The
 cheat vanished — and the success rate honestly dropped back to 0%.
@@ -317,10 +325,10 @@ Evaluation always uses the true full task, so the numbers never flatter us.
 
 This alone solved the **kinematic** maze (the version without momentum):
 
-| First success (step 1,403) | After mastery (step 421,814) |
-|---|---|
+| First success (step 1,403)                                                                                          | After mastery (step 421,814)                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | ![first](../storage_local/ant__20260812_0033__20309480__train_sac__single__sac_kin_rev/success_gifs/1_first__step1403_len403.gif) | ![final](../storage_local/ant__20260812_0033__20309480__train_sac__single__sac_kin_rev/success_gifs/5_final__step421814_len79.gif) |
-| Lucky wandering, 403 steps, started right next to the goal | The real task, from the real start, 79 steps — near optimal |
+| Lucky wandering, 403 steps, started right next to the goal                                                          | The real task, from the real start, 79 steps — near optimal                                                         |
 
 SAC reached 99% success in **422k steps**. Real progress. But the dynamic
 version — the one with momentum, the one that matters — still failed.
@@ -392,10 +400,10 @@ On the kinematic maze it beat sparse reward by about 25% (322k steps vs 411k).
 legal but unwanted trick: poke the small head in, then pirouette inside the
 slit. In the real experiment the transparent covers prevent this.
 
-| The maneuver we want | The trick the agent found |
-|---|---|
+| The maneuver we want                                                                                                   | The trick the agent found                                                                                               |
+| ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | ![big first](../storage_local/ant__20260812_2304__20381854__train_sac__single__pnas_sac_kin_rev_geo/success_gifs/final_bigfirst.gif) | ![pirouette](../storage_local/ant__20260812_2304__20381854__train_sac__single__pnas_sac_kin_rev_geo/success_gifs/final_pirouette.gif) |
-| Big head enters, turn in the middle, small head exits | Small head pokes in, then spins inside the slit |
+| Big head enters, turn in the middle, small head exits                                                                  | Small head pokes in, then spins inside the slit                                                                         |
 
 Setting the slit to the exact paper value (0.150) reduced this from about half
 of all solutions to about a third. The last three changes removed it entirely.
@@ -458,13 +466,13 @@ which head crosses SLIT 2 first :  small  25 / 25
 **Every single solution uses the ants' maneuver.** Big head in, turn in the
 middle room, small head out. No shortcuts, in real physics.
 
-| | Value |
-|---|---|
+|                         | Value        |
+| ----------------------- | ------------ |
 | Success (deterministic) | 100% (5 / 5) |
-| Success (stochastic) | 100% (3 / 3) |
-| Steps to master | 247,519 |
-| Episode length | ~153 steps |
-| Canonical maneuver | 25 / 25 |
+| Success (stochastic)    | 100% (3 / 3) |
+| Steps to master         | 247,519      |
+| Episode length          | ~153 steps   |
+| Canonical maneuver      | 25 / 25      |
 
 Here is the whole journey in one picture — every experiment we ran:
 
