@@ -52,7 +52,8 @@ together). Current stage: single agent.
    - **Linear velocity in the observation** (`env.observe_linear_velocity`,
      obs 25 → 27): closes the partial-observability gap under momentum.
    Reports written by that session: `<run>/REPORT.md`, `<run>/BLOG_POST.md`;
-   videos in `<run>/eval/`.
+   videos in `<run>/eval/`. Simple-English explanation of the three changes:
+   [../notes/what_made_it_work.md](../notes/what_made_it_work.md).
 
    (Earlier scicore attempts on rtx4090/a100 were slow — ~11-55 steps/s, CPU
    bound — and were cancelled in favour of the Azure box.)
