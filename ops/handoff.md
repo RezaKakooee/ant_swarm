@@ -33,9 +33,29 @@ together). Current stage: single agent.
 6. **v2 solved (kinematic)** — job 20384223: 100% at 518k steps, 1,661 saved
    solutions. ~13/20 final solutions enter big-first; a residual ~7/20 use a
    tight small-first thread (accepted — impossible by hand, geometrically real).
-7. **Now running: dynamic mode on v2** — job 20432145 (rtx4090, started
-   2026-08-13 ~11:33). Dynamic = forces + momentum, the physics closest to
-   real ants. This is the last single-agent milestone.
+7. **DYNAMIC v2 SOLVED (2026-08-14) — single-agent milestone COMPLETE.**
+   Run `ant__20260814_1230__local-1427853__train_sac__pnas_dyn_geo_v2__best`
+   (trained on the Azure A100 box): **100% success, mastered at 247,519 steps**;
+   eval 5/5 deterministic + 3/3 stochastic, ~153 steps/episode.
+   **Verified by replay: 25/25 final solutions use the canonical maneuver**
+   (BIG head crosses slit 1 first, small head exits slit 2 first). The
+   pirouette shortcut is gone — this is the ants' solution, in real physics.
+
+   Three changes made it work (all now in git, commit 988d139):
+   - **Pose-path curriculum** (`scripts/rl/pose_curriculum.py`, mode
+     `pose_path`): 16 anchors taken from the BFS solution path itself, so
+     every stage sits ON the canonical route (random x-band reverse spawns
+     were often un-navigable). Mastery-only advancement, no time promotion.
+   - **Success replay buffer** (`scripts/rl/success_replay_buffer.py`): 25% of
+     each SAC minibatch drawn from verified successful episodes — stops
+     catastrophic forgetting of the rare slit traversal.
+   - **Linear velocity in the observation** (`env.observe_linear_velocity`,
+     obs 25 → 27): closes the partial-observability gap under momentum.
+   Reports written by that session: `<run>/REPORT.md`, `<run>/BLOG_POST.md`;
+   videos in `<run>/eval/`.
+
+   (Earlier scicore attempts on rtx4090/a100 were slow — ~11-55 steps/s, CPU
+   bound — and were cancelled in favour of the Azure box.)
 
 ## Where things are
 
@@ -82,10 +102,7 @@ Gap/easier-env curricula cause negative transfer here — do not use them.
 
 ## Next steps (in order)
 
-1. **Finish dynamic v2** (job 20432145 or rerun on a stronger CPU/a100).
-   If it stalls: add linear velocity (vx, vy) to the observation — known
-   partial-observability gap in dynamic mode.
-2. **Multi-agent** (`ants.n >= 2`, dynamic): first centralized (current SB3
+1. **Multi-agent** (`ants.n >= 2`, dynamic): first centralized (current SB3
    setup already supports it), then parameter-shared decentralized policies
    (CTDE). The per-ant observation rows are already designed for this.
 3. Optional: BC / demonstrations from the ~40k saved kinematic solutions
