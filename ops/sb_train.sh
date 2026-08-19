@@ -12,7 +12,8 @@
 #SBATCH --error=/dev/null
 
 
-PROJECT_ROOT="/scicore/home/graber0001/kakooe0000/ant_swarm"
+# repo root: the directory sbatch was submitted from, else this script's parent
+PROJECT_ROOT="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 # Usage: sbatch ops/sb_train.sh [train_ppo|train_sac] [config.yaml] [key=value ...]
 #   arg1: training script — a name resolved under scripts/rl/ (default train_ppo),

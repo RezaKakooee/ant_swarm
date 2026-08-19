@@ -1,8 +1,8 @@
 # Teaching One Agent the Puzzle That Ants Solve Every Day
 
-<video src="redvid_io_ants_solving_a_puzzle.mp4" controls width="720"></video>
+<video src="assets/redvid_io_ants_solving_a_puzzle.mp4" controls width="720"></video>
 
-▶ **[Watch this first](redvid_io_ants_solving_a_puzzle.mp4)** — 30 seconds of
+▶ **[Watch this first](assets/redvid_io_ants_solving_a_puzzle.mp4)** — 30 seconds of
 real ants.
 
 A group of crazy ants is carrying a T-shaped load through a box with three
@@ -25,7 +25,7 @@ what finally worked. *(The full version, with every experiment, is in
 
 ## 1. The task, and the words for it
 
-![The task and its words](../../docs/figures/task_vocabulary.png)
+![The task and its words](assets/task_vocabulary.png)
 
 Everything below uses these words: the **load** with its **big head** and
 **small head**, three **rooms**, two **walls**, two **slits**, a **start pose**
@@ -33,7 +33,7 @@ and a **goal**.
 
 Now the numbers that make it hard:
 
-![The maze and its key dimensions](../../docs/figures/maze_geometry.png)
+![The maze and its key dimensions](assets/maze_dimensions.png)
 
 - The **big head (0.175) does not fit the slit (0.150)**. You cannot push the
   load straight through — it has to be tilted and threaded.
@@ -42,7 +42,7 @@ Now the numbers that make it hard:
 
 And one more fact, which we measured rather than guessed:
 
-![The legal poses, at four fixed angles](../../docs/figures/config_space.png)
+![The legal poses, at four fixed angles](assets/config_space.png)
 
 Each panel fixes the load's angle and shows where its centre may sit — white is
 legal, black collides. We tested **every** angle: at **no fixed angle** can the
@@ -90,7 +90,7 @@ The honest first move is to just train it and look.
 | SAC / PPO, reward only at the goal                         | 13M   | 0%     |
 | PPO,**plus** a reward for getting closer to the goal | 14M   | 0%     |
 
-![Failed dynamic policy](../ant__20260602_2331__13328496__train_ppo__single/renders/policy_14000000.gif)
+![Failed dynamic policy](assets/policy_14000000.gif)
 
 *PPO after 14 million steps. It learned exactly one thing: drive at the goal.
 It pushes the load into the wall and stays there until the episode ends.*
@@ -98,7 +98,7 @@ It pushes the load into the wall and stays there until the episode ends.*
 The third row is the interesting one. Rewarding "get closer to the goal" is the
 standard fix when the real reward is too rare. Here it makes things **worse**:
 
-![Straight-line distance vs route distance](../../docs/figures/reward_euclidean_vs_geodesic.png)
+![Straight-line distance vs route distance](assets/reward_euclidean_vs_geodesic.png)
 
 *Left: straight-line distance to the goal. The colour flows smoothly through
 the walls as if they were not there — so the reward tells the agent to drive
@@ -112,7 +112,7 @@ There were two more problems underneath:
   never finds it, and then has to follow it for ~150 steps in the right order.
 - **The agent found a cheat.** Our first "successes" were fake:
 
-![The small-head cheat](../ant__20260601_1714__13102512__train_sac__single/success_gifs/cheat_smallhead.gif)
+![The small-head cheat](assets/cheat_smallhead.gif)
 
 *A "94% success" policy from that era, at the full narrow gap. Look at which
 end leads: the small head goes first through both slits, and the big head never
@@ -142,7 +142,7 @@ version:
 
 | First success (step 1,403)                                                                                          | After mastery (step 421,814)                                                                                         |
 | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| ![first](../ant__20260812_0033__20309480__train_sac__single__sac_kin_rev/success_gifs/1_first__step1403_len403.gif) | ![final](../ant__20260812_0033__20309480__train_sac__single__sac_kin_rev/success_gifs/5_final__step421814_len79.gif) |
+| ![first](assets/1_first__step1403_len403.gif) | ![final](assets/5_final__step421814_len79.gif) |
 | Lucky wandering, 403 steps, started next to the goal                                                                | The real task, from the real start, 79 steps — near optimal                                                         |
 
 **Second: backwards along what?** We were dropping the load at random spots in
@@ -163,7 +163,7 @@ One computation, three payoffs:
    **punishes itself**.
 2. **Curriculum stages that sit on the real route:**
 
-![The 16 curriculum stages](../../docs/figures/curriculum_anchors.png)
+![The 16 curriculum stages](assets/curriculum_anchors.png)
 
 *The 16 training stages, drawn as the load itself. Read it from dark blue
 (stage 0, almost at the goal) to dark red (stage 15, the real start) and you
@@ -179,7 +179,7 @@ transparent covers prevent this):
 
 | The maneuver we want                                                                                                   | The trick the agent found                                                                                               |
 | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| ![big first](../ant__20260812_2304__20381854__train_sac__single__pnas_sac_kin_rev_geo/success_gifs/final_bigfirst.gif) | ![pirouette](../ant__20260812_2304__20381854__train_sac__single__pnas_sac_kin_rev_geo/success_gifs/final_pirouette.gif) |
+| ![big first](assets/final_bigfirst.gif) | ![pirouette](assets/final_pirouette.gif) |
 | Big head enters, turn in the middle, small head exits                                                                  | Small head pokes in, then spins inside the slit                                                                         |
 
 Putting the curriculum stages exactly on the BFS route is what finally removed
@@ -199,7 +199,7 @@ Two last fixes for the physics version:
 **100% success, mastered at 247,519 steps** — about two hours on one machine,
 and **56× fewer steps** than the 14-million-step run that learned nothing.
 
-![The solved task](eval/eval_ep01_len153_ret1.76.gif)
+![The solved task](assets/eval_ep01_len153_ret1.76.gif)
 
 *One evaluation episode from the real start pose: big head into the first slit,
 turn in the middle room, small head out of the second. 153 steps.*
@@ -218,7 +218,7 @@ middle room, small head out — in real physics, with no shortcuts.
 
 Here is the whole journey in one picture:
 
-![All experiments](../../docs/figures/experiments_overview.png)
+![All experiments](assets/experiments_overview.png)
 
 *Every experiment we ran. Red bars never solved the maze, no matter how long
 they ran. The blue bar is the final solution — the smallest bar on the chart.*

@@ -133,9 +133,6 @@ class RenderCallback(BaseCallback):
         return True
 
     def _save_gif(self):
-        import matplotlib.pyplot as plt
-        from matplotlib.animation import FuncAnimation, PillowWriter
-
         env = AntSwarmEnv(config=self.cfg, seed=self.seed)
         if self.wall_len is not None:
             env.set_wall_length(self.wall_len)
@@ -155,17 +152,10 @@ class RenderCallback(BaseCallback):
         self.save_dir.mkdir(parents=True, exist_ok=True)
         out = self.save_dir / f"policy_{self.num_timesteps:08d}.gif"
 
-        fig, ax = plt.subplots(figsize=(6.5, 4.7))
-        im = ax.imshow(frames[0])
-        ax.set_axis_off()
-
-        def update(i):
-            im.set_data(frames[i])
-            return [im]
-
-        anim = FuncAnimation(fig, update, frames=len(frames), interval=1000 // self.fps, blit=True)
-        anim.save(str(out), writer=PillowWriter(fps=self.fps))
-        plt.close(fig)
+        from PIL import Image
+        imgs = [Image.fromarray(f) for f in frames]
+        imgs[0].save(str(out), save_all=True, append_images=imgs[1:], loop=0,
+                     duration=max(1, int(1000 / self.fps)), optimize=True)
         logger.info(f"[render] {out.relative_to(STORAGE_DIR)}  ({len(frames)} frames)")
 
         # --- log to TensorBoard ---
@@ -334,17 +324,11 @@ def _resolve_eval_model_path(path_str: str | Path) -> tuple[Path, Path]:
 
 
 def _save_eval_gif(frames: list[np.ndarray], out_path: Path, fps: int = 30):
-    import matplotlib.pyplot as plt
-    from matplotlib.animation import FuncAnimation, PillowWriter
-    h, w = frames[0].shape[:2]
-    fig, ax = plt.subplots(figsize=(6.5, 6.5 * h / w))
-    im = ax.imshow(frames[0])
-    ax.set_axis_off()
-    anim = FuncAnimation(fig, lambda i: [im.set_data(frames[i]) or im],
-                         frames=len(frames), interval=1000 / fps, blit=True)
+    from PIL import Image
+    imgs = [Image.fromarray(f) for f in frames]
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    anim.save(str(out_path), writer=PillowWriter(fps=fps))
-    plt.close(fig)
+    imgs[0].save(str(out_path), save_all=True, append_images=imgs[1:], loop=0,
+                 duration=max(1, int(1000 / fps)), optimize=True)
 
 
 def _save_eval_mp4(frames: list[np.ndarray], out_path: Path, fps: int = 30):

@@ -10,9 +10,9 @@ solve a motion-planning problem that we teach in robotics courses.
 
 So I asked myself: can AI agents do the same?
 
-<video src="redvid_io_ants_solving_a_puzzle.mp4" controls width="720"></video>
+<video src="assets/redvid_io_ants_solving_a_puzzle.mp4" controls width="720"></video>
 
-▶ [redvid_io_ants_solving_a_puzzle.mp4](redvid_io_ants_solving_a_puzzle.mp4)
+▶ [assets/redvid_io_ants_solving_a_puzzle.mp4](assets/redvid_io_ants_solving_a_puzzle.mp4)
 
 There might already be some works implementing this task. I did not even search
 about it, because I wanted to do it myself — I was sure I would learn a lot
@@ -32,7 +32,7 @@ However, I started with a single agent, which should be easier for RL.
 The environment is a small 2-D rigid-body simulator in pure NumPy,
 with exact rectangle collisions.
 
-![The task and its words](../../docs/figures/task_vocabulary.png)
+![The task and its words](assets/task_vocabulary.png)
 
 A single agent either moves the load directly (*kinematic*) or pushes it with real
 forces and momentum (*dynamic*, the mode closest to the ants).
@@ -43,7 +43,7 @@ If you want to try how this env works, I also built a simple but interactive
 version of it here:
 
 ```bash
-git clone https://github.com/RezaKakooee/ant_swarm.git
+git clone https://github.com/RezaKakooee/ant-piano-movers-rl.git
 # then open interactive/interactive_t.html in any browser
 ```
 
@@ -124,7 +124,7 @@ It worked. The agent passed every stage and reached the real narrow width.
 
 Then I looked at what it actually does:
 
-![The small-head cheat](../ant__20260601_1714__13102512__train_sac__single/success_gifs/cheat_smallhead.gif)
+![The small-head cheat](assets/cheat_smallhead.gif)
 
 It never does the maneuver. It slides the load through sideways, **small head
 first**. The small head fits everywhere, so that is what the agent learned in
@@ -163,15 +163,16 @@ It failed again:
 | -------------------------- | ------ | ------- |
 | PPO dynamic, shaped reward | 14.06M | 0%      |
 
-![PPO after 14 million steps](../ant__20260602_2331__13328496__train_ppo__single/renders/policy_14000000.gif)
+![PPO after 14 million steps](assets/policy_14000000.gif)
 
 After 14 million steps it has learned exactly one thing: drive at the goal. It
 pushes the load against the wall and waits there until the episode ends.
 
 So the sparse reward was not the whole story. My second guess: **the space of
-solutions is too tiny.** Most poses of the load are not even legal — the load
-is inside a wall. To pass a slit it has to be in the right place *and* at the
-right angle at the same time, and very few poses satisfy both. How tight is it?
+solutions is too tiny.** In most positions and angles the load would simply
+overlap a wall, so they are impossible. And to pass a slit, the load has to be
+in the right place *and* at the right angle at the same time — very few
+combinations do that. How tight is it?
 If I make the walls 3 mm thicker, the maze has no solution at all. Random
 exploration does not find something like this.
 
@@ -193,7 +194,7 @@ The maze never changes here — only where the episode begins:
 
 | 1. start in the goal room                                                                                       | 2. start in the corridor                                                                                         | 3. start at the real start                                                                                       |
 | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| ![a](../ant__20260812_0033__20309480__train_sac__single__sac_kin_rev/success_gifs/1_first__step1403_len403.gif) | ![b](../ant__20260812_0033__20309480__train_sac__single__sac_kin_rev/success_gifs/2_early__step150542_len31.gif) | ![c](../ant__20260812_0033__20309480__train_sac__single__sac_kin_rev/success_gifs/5_final__step421814_len79.gif) |
+| ![a](assets/1_first__step1403_len403.gif) | ![b](assets/2_early__step150542_len31.gif) | ![c](assets/5_final__step421814_len79.gif) |
 | easy — even a clumsy policy stumbles into the goal                                                             | the hard part: the turn between the two slits                                                                    | the whole task, from the real start                                                                              |
 
 Then I ran SAC, and it was successful.
@@ -203,12 +204,12 @@ But when I looked closely, it was still cheating.
 My first thought was that my arena was to blame — I had drawn it by hand, not
 from the paper. So I rebuilt the maze with the real numbers:
 
-![The maze, with the real numbers](../../docs/figures/maze_dimensions.png)
+![The maze, with the real numbers](assets/maze_dimensions.png)
 
 It did not help. In the new maze the agent went in small head first again — all
 20 solutions I checked.
 
-![Still cheating in the accurate maze](../ant__20260812_2308__20381855__train_sac__single__pnas_sac_kin_rev/success_gifs/cheat_accurate_maze.gif)
+![Still cheating in the accurate maze](assets/cheat_accurate_maze.gif)
 
 Two things were wrong. My slit is still a bit too generous — in the paper it is
 0.81 of the big head, in mine 0.86 — so this shortcut stays open. And my
@@ -217,54 +218,32 @@ ever asked it to reach the slit with the big head in front.
 
 The stages were mine. They were not taken from a real solution of the maze.
 
+
 ## 9. Experiment 4: give the agent a teacher
 
-At this point the agent had two problems. It did not know which moves were real
-progress, and my curriculum did not know which starting poses were useful.
+At this point the agent had two problems. It did not know which moves were real progress, and my curriculum did not know which starting poses were useful.
 
-So I decided to give it a teacher. Not a teacher that tells it exactly what
-action to take, but one that already knows a real route through the maze.
+So I decided to give it a teacher. Not a teacher that tells it exactly what action to take, but one that already knows a real route through the maze.
 
-For that, I needed a map of every situation the load can be in. Here a
-"situation" is not only its position. Its angle matters too: the load can fit at
-one angle and hit a wall at another, even when its centre is in the same place.
-So each point on this map is a full pose: **x, y, and angle**.
+For that, I needed a map of every situation the load can be in. Here a "situation" is not only its position. Its angle matters too: the load can fit at one angle and hit a wall at another, even when its centre is in the same place. So each point on this map is a full pose: x, y, and angle.
 
-Then I used **BFS**, or breadth-first search. You can think of it as flooding
-this map backwards from the goal. The flood can move from one pose to another
-only when that small move is legal and does not cross a wall.
+Then I used BFS, or breadth-first search. You can think of it as flooding this map backwards from the goal. The flood can move from one pose to another only when that small move is legal and does not cross a wall.
 
-When the flood is finished, every reachable pose has a number. The number says
-how many small legal moves are left before the goal. A pose with distance 100
-is closer than one with distance 101, even if the straight-line distance says
-otherwise.
+When the flood is finished, every reachable pose has a number. The number says how many small legal moves are left before the goal. A pose with distance 100 is closer than one with distance 101, even if the straight-line distance says otherwise.
 
 This one map gave me both things I was missing.
 
-**Which way is forward: a better reward.** My old reward used the straight-line
-distance to the goal. But the straight line goes through the walls. That is why
-the agent was rewarded for pushing against a wall. It was also punished for
-turning away from the goal, even though that turn is exactly what solves the
-maze.
+**A better reward.** My old reward used the straight-line distance to the goal. But the straight line goes through the walls. That is why the agent was rewarded for pushing against a wall. It was also punished for turning away from the goal, even though that turn is exactly what solves the maze.
 
-The BFS distance follows the real route instead. If turning the load brings it
-from distance 101 to 100, the agent gets a reward. If pushing the small head
-into a dead end makes the distance larger, the agent loses reward. Now the
-reward points around the walls, not through them.
+The BFS number does not have this problem, because it counts the moves along the real route. So the new reward is simple: the agent gains when the number goes down, and loses when it goes up. Turning the load to line it up with the slit brings the number down, so turning now pays. Pushing the small head into the dead end sends it up, so the dead end costs.
 
-**Where to practise: stages from a real solution.** BFS also gives me a valid
-path from the start to the goal. I picked 16 poses along that path and used them
-as the curriculum stages.
+**Better starting poses.** BFS also gives me a valid path from the start to the goal. I picked 16 poses along that path and used them as the curriculum stages.
 
-![The 16 curriculum stages](../../docs/figures/curriculum_anchors.png)
+The 16 curriculum stages
 
-Read the colours from dark blue to dark red. Stage 0 is almost at the goal, and
-stage 15 is the real start. In other words, the picture shows the solution
-backwards, including the important turn between the two slits.
+Read the colours from dark blue to dark red. Stage 0 is almost at the goal, and stage 15 is the real start. In other words, the picture shows the solution backwards, including the important turn between the two slits.
 
-The agent learns it in the same order: first the last piece, then the piece
-before it, and so on. It moves to the next stage only after reaching 90%
-success. Time alone is never enough.
+The agent learns it in the same order: first the last piece, then the piece before it, and so on. It moves to the next stage only when it reaches 90% success on the current one. A stage is never skipped just because it is taking too long.
 
 ## 10. Two last fixes, and the result
 
@@ -285,7 +264,7 @@ Then it worked. **100% success, learned in 247,519 steps** — about two hours o
 one machine, and 56 times fewer steps than the 14-million-step run that learned
 nothing.
 
-![The solved task](eval/eval_ep01_len153_ret1.76.gif)
+![The solved task](assets/eval_ep01_len153_ret1.76.gif)
 
 But the number I actually cared about was not the success rate. It was *how* it
 solves the maze. So I replayed the last 25 solutions and checked which head goes
@@ -313,14 +292,14 @@ and people do not.
 
 There is also plenty left to improve in what already exists. My slit is still a
 bit wider than the paper's. The teacher is a strong crutch — I would like to see
-how far one can get with a weaker one. And nobody has tried PPO with the teacher
-setup yet.
+how far one can get with a weaker one. And I only ran the teacher setup with SAC, never
+with PPO.
 
 ## Come and play with it
 
 The code is on GitHub, and it is open:
 
-**[github.com/RezaKakooee/ant_swarm](https://github.com/RezaKakooee/ant_swarm)**
+**[github.com/RezaKakooee/ant-piano-movers-rl](https://github.com/RezaKakooee/ant-piano-movers-rl)**
 
 It is a normal gym environment, so you can drop your own algorithm on it in a
 few lines. Everything in this post — the maze, the configs, the curriculum, the

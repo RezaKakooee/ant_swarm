@@ -6,9 +6,9 @@
 
 ## 1. First, watch the ants
 
-<video src="redvid_io_ants_solving_a_puzzle.mp4" controls width="720"></video>
+<video src="assets/redvid_io_ants_solving_a_puzzle.mp4" controls width="720"></video>
 
-▶ **[redvid_io_ants_solving_a_puzzle.mp4](redvid_io_ants_solving_a_puzzle.mp4)**
+▶ **[assets/redvid_io_ants_solving_a_puzzle.mp4](assets/redvid_io_ants_solving_a_puzzle.mp4)**
 — 30 seconds, real ants, real maze.
 
 A group of longhorn crazy ants is carrying a T-shaped load through a box. The
@@ -122,7 +122,7 @@ Two numbers decide everything:
 Together they leave one family of solutions: **big head in → turn in the middle
 → small head out**. Exactly what the ants do.
 
-![The maze and its key dimensions](../../docs/figures/maze_geometry.png)
+![The maze and its key dimensions](assets/maze_dimensions.png)
 
 *The load at its start pose, and the same load tilted while threading the first
 slit. The two arrows that matter: the big head is wider than the slit, and the
@@ -223,7 +223,7 @@ only the goal, reward getting closer to it. Now there is a signal at every step.
 It did not work either. PPO trained for **14 million steps** and never solved
 the maze once:
 
-![Failed dynamic policy](../ant__20260602_2331__13328496__train_ppo__single/renders/policy_14000000.gif)
+![Failed dynamic policy](assets/policy_14000000.gif)
 
 *PPO after 14 million steps. It learned exactly one thing: drive at the goal.
 It pushes the load against the wall and stays there until the episode ends.*
@@ -260,7 +260,7 @@ which ones are collision-free:
 - Its clearance is about **2.5 mm**. Make the walls 3 mm thicker and the maze
   becomes **impossible**.
 
-![The legal poses, at four fixed angles](../../docs/figures/config_space.png)
+![The legal poses, at four fixed angles](assets/config_space.png)
 
 *Each panel fixes the load's angle and shows where its centre may sit: white is
 legal, black collides. We tested every angle — at **no fixed angle** can the
@@ -291,7 +291,7 @@ of the T, the agent learned to poke the **small head** through the slits,
 because the small head fits anywhere. It scored well while never doing the real
 maneuver.
 
-![The small-head cheat](../ant__20260601_1714__13102512__train_sac__single/success_gifs/cheat_smallhead.gif)
+![The small-head cheat](assets/cheat_smallhead.gif)
 
 *A "94% success" policy from that era, at the full narrow gap. Look at which
 end leads: the small head goes first through both slits, and the big head never
@@ -340,7 +340,7 @@ This alone solved the **kinematic** maze (the version without momentum):
 
 | First success (step 1,403)                                                                                          | After mastery (step 421,814)                                                                                         |
 | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| ![first](../ant__20260812_0033__20309480__train_sac__single__sac_kin_rev/success_gifs/1_first__step1403_len403.gif) | ![final](../ant__20260812_0033__20309480__train_sac__single__sac_kin_rev/success_gifs/5_final__step421814_len79.gif) |
+| ![first](assets/1_first__step1403_len403.gif) | ![final](assets/5_final__step421814_len79.gif) |
 | Lucky wandering, 403 steps, started right next to the goal                                                          | The real task, from the real start, 79 steps — near optimal                                                         |
 
 SAC reached 99% success in **422k steps**. Real progress. But the dynamic
@@ -404,7 +404,7 @@ Now the reward is honest:
 - Poking the small head into the dead end → the route number **jumps up** →
   negative reward. **The trap punishes itself.**
 
-![Straight-line distance vs route distance](../../docs/figures/reward_euclidean_vs_geodesic.png)
+![Straight-line distance vs route distance](assets/reward_euclidean_vs_geodesic.png)
 
 *The same maze, two ideas of "how far is the goal". On the left the colour
 flows smoothly through the walls, as if they were not there — that is the
@@ -422,7 +422,7 @@ slit. In the real experiment the transparent covers prevent this.
 
 | The maneuver we want                                                                                                   | The trick the agent found                                                                                               |
 | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| ![big first](../ant__20260812_2304__20381854__train_sac__single__pnas_sac_kin_rev_geo/success_gifs/final_bigfirst.gif) | ![pirouette](../ant__20260812_2304__20381854__train_sac__single__pnas_sac_kin_rev_geo/success_gifs/final_pirouette.gif) |
+| ![big first](assets/final_bigfirst.gif) | ![pirouette](assets/final_pirouette.gif) |
 | Big head enters, turn in the middle, small head exits                                                                  | Small head pokes in, then spins inside the slit                                                                         |
 
 Setting the slit to the exact paper value (0.150) reduced this from about half
@@ -443,7 +443,7 @@ back than the stage before. No more useless random poses. And a stage advances
 **only** when the agent truly masters it (90% success over 100 episodes) —
 never because time ran out.
 
-![The 16 curriculum stages](../../docs/figures/curriculum_anchors.png)
+![The 16 curriculum stages](assets/curriculum_anchors.png)
 
 *The 16 training stages, drawn as the load itself. Read it from dark blue
 (stage 0, almost at the goal) to dark red (stage 15, the real start) and you
@@ -476,7 +476,7 @@ and the policy could finally brake and correct for drift.
 **100% success, mastered at 247,519 steps** — about two hours on one machine,
 and **56× fewer steps** than the 14-million-step run that learned nothing.
 
-![The solved task](eval/eval_ep01_len153_ret1.76.gif)
+![The solved task](assets/eval_ep01_len153_ret1.76.gif)
 
 *One evaluation episode, from the real start pose: big head into the first
 slit, turn in the middle room, small head out of the second. 153 steps. Four
@@ -504,7 +504,7 @@ middle room, small head out. No shortcuts, in real physics.
 
 Here is the whole journey in one picture — every experiment we ran:
 
-![All experiments](../../docs/figures/experiments_overview.png)
+![All experiments](assets/experiments_overview.png)
 
 *Red bars never solved the maze, no matter how long they ran. The blue bar is
 the final dynamic solution: the smallest bar on the chart.*

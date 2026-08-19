@@ -1,0 +1,42 @@
+cff-version: 1.2.0
+title: "Ant Piano-Movers RL: a reinforcement-learning environment for the puzzle ants solve"
+message: "If you use this environment or the write-up in your research, please cite it as below."
+type: software
+authors:
+  - family-names: Kakooee
+    given-names: Reza
+    orcid: "https://orcid.org/0000-0002-2946-9668"
+repository-code: "https://github.com/RezaKakooee/ant-piano-movers-rl"
+url: "https://rezakakooee.github.io/ant-piano-movers-rl/"
+abstract: >-
+  A Gymnasium environment recreating the cooperative-transport "piano-movers"
+  experiment of Dreyer et al. (PNAS 2025), in which crazy ants move a T-shaped
+  load through two narrow slits. The load is wider than the slit and the middle
+  corridor is shorter than the load, so the task can only be solved by entering
+  big-head first, turning inside the corridor, and exiting small-head first.
+  This makes it a deceptive-exploration benchmark: straight-line distance
+  shaping points through the walls and punishes the required turn. The repo
+  includes the environment, a BFS route-distance ("geodesic") reward, a
+  curriculum whose stages are taken from a real solution path, SAC and PPO
+  training scripts, and a browser sandbox.
+keywords:
+  - reinforcement learning
+  - motion planning
+  - piano movers problem
+  - collective behaviour
+  - cooperative transport
+  - gymnasium environment
+license: MIT
+version: "1.0.0"
+date-released: "2026-08-20"
+references:
+  - type: article
+    title: "Comparing cooperative geometric puzzle solving in ants versus humans"
+    authors:
+      - family-names: Dreyer
+        given-names: Tabea
+      - family-names: Feinerman
+        given-names: Ofer
+    journal: "Proceedings of the National Academy of Sciences"
+    year: 2025
+    doi: "10.1073/pnas.2414274121"

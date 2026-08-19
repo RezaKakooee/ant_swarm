@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Can an AI agent solve the puzzle that ants solve?</title>
+    <meta name="description" content="Teaching a reinforcement-learning agent the piano-movers puzzle that crazy ants solve collectively — the failures, the cheats, and the BFS teacher that finally worked.">
+    <meta property="og:title" content="Can an AI agent solve the puzzle that ants solve?">
+    <meta property="og:description" content="A weekend project: an RL agent learns to thread a T-shaped load through two narrow slits — the same maneuver ants perform in the PNAS piano-movers experiment.">
+    <meta property="og:type" content="article">
+    <meta property="og:image" content="assets/task_vocabulary.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="inner">
+        <a class="mark" href="#top">Ant&nbsp;Swarm</a>
+        <nav aria-label="Page sections">
+          <a href="#ants">The ants</a>
+          <a href="#env">Environment</a>
+          <a href="#exp1">Experiments</a>
+          <a href="#result">Result</a>
+          <a href="#code">Code</a>
+          <a href="#cite">Cite</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="top">
+      <div class="wrap">
+        <section class="hero">
+          <p class="eyebrow">Reinforcement learning &middot; piano-movers problem</p>
+          <h1>Can an AI agent solve the puzzle that ants solve?</h1>
+          <p class="lede">
+            A group of ants carries a T-shaped load through two narrow slits, with no
+            leader and no plan. I rebuilt their maze as a gym environment and spent a
+            few weekends trying to teach one agent the same maneuver. It failed for a
+            long time. This is what finally worked.
+          </p>
+          <p class="byline">Reza Kakooee &middot; side project</p>
+          <div class="actions">
+            <a class="button button--primary" href="https://github.com/RezaKakooee/ant-piano-movers-rl">Code on GitHub</a>
+            <a class="button" href="#try">Try the sandbox</a>
+            <a class="button" href="#cite">Cite this post</a>
+          </div>
+        </section>
+
+        <!-- 1 ---------------------------------------------------------- -->
+        <section class="section" id="ants">
+          <h2><span class="num">01</span>The ants</h2>
+          <p>
+            I'm sure many of you have seen this video, showing a group of ants
+            carrying a T-shaped load through a box.
+          </p>
+          <p>
+            It is amazing to see how a few milligrams of insect, with no leader and no
+            plan, solve a motion-planning problem that we teach in robotics courses.
+          </p>
+          <p>So I asked myself: can AI agents do the same?</p>
+          <figure>
+            <video src="assets/redvid_io_ants_solving_a_puzzle.mp4" controls playsinline preload="metadata"></video>
+          </figure>
+          <p>
+            There might already be some works implementing this task. I did not even
+            search about it, because I wanted to do it myself &mdash; I was sure I would
+            learn a lot along the way.
+          </p>
+        </section>
+
+        <!-- 2 ---------------------------------------------------------- -->
+        <section class="section" id="env">
+          <h2><span class="num">02</span>The environment</h2>
+          <p>
+            So I rebuilt the maze as a gym environment, to see if RL agents can learn
+            the same maneuver or not.
+          </p>
+          <p>
+            The real system is multi-agent, and that is where this task gets even more
+            interesting, because the research behind this video
+            [<strong>Dreyer et al., PNAS 2025</strong>] shows that ants get
+            <strong>better</strong> in bigger groups. People get <strong>worse!</strong>
+          </p>
+          <p>However, I started with a single agent, which should be easier for RL.</p>
+          <p>
+            The environment is a small 2-D rigid-body simulator in pure NumPy, with
+            exact rectangle collisions.
+          </p>
+          <figure>
+            <img src="assets/task_vocabulary.png" alt="The maze, with every part named: start room, corridor, goal room, walls, slits, the load with its big and small head.">
+            <figcaption>The task, and the words used in this post.</figcaption>
+          </figure>
+          <p>
+            A single agent either moves the load directly (<em>kinematic</em>) or pushes
+            it with real forces and momentum (<em>dynamic</em>, the mode closest to the
+            ants).
+          </p>
+        </section>
+
+        <!-- 3 ---------------------------------------------------------- -->
+        <section class="section" id="try">
+          <h2><span class="num">03</span>Try it yourself</h2>
+          <p>
+            If you want to try how this env works, I also built a simple but
+            interactive version of it, running right here:
+          </p>
+          <figure class="sandbox">
+            <iframe src="sandbox/" title="Interactive T-shape maze sandbox" loading="lazy"></iframe>
+          </figure>
+          <div class="actions">
+            <a class="button" href="sandbox/" target="_blank" rel="noopener">Open the sandbox full screen</a>
+          </div>
+          <p>
+            Feeling the maze by hand is the fastest way to understand why an agent
+            struggles with it.
+          </p>
+        </section>
+
+        <!-- 4 ---------------------------------------------------------- -->
+        <section class="section" id="components">
+          <h2><span class="num">04</span>Now let's see how the env components are defined</h2>
+
+          <h3>Observation</h3>
+          <p>
+            Instead of giving the agent an image of the maze, I took the observation
+            simple, as a collection of features &mdash; 25 numbers in total:
+          </p>
+          <table>
+            <thead><tr><th>Block</th><th class="num">Count</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td>Attachment offset</td><td class="num">2</td><td>where this ant holds the load</td></tr>
+              <tr><td>Load position</td><td class="num">2</td><td>where the T is</td></tr>
+              <tr><td>Goal vector</td><td class="num">2</td><td>from the load to the goal</td></tr>
+              <tr><td>Orientation</td><td class="num">2</td><td>sin&nbsp;&theta;, cos&nbsp;&theta;</td></tr>
+              <tr><td>Angular velocity</td><td class="num">1</td><td>how fast it spins</td></tr>
+              <tr><td>Tip &rarr; slit-corner distances</td><td class="num">16</td><td>4 arm tips &times; 4 slit corners</td></tr>
+            </tbody>
+          </table>
+          <p>
+            The last block matters. Without it the agent has no idea where the walls
+            are, so it cannot know that it is about to hit one. And I did not want an
+            image, because then the agent would first have to learn to <em>see</em>.
+            The hard part here is not seeing, it is control.
+          </p>
+
+          <h3>Action</h3>
+          <p>
+            I implemented two versions. In kinematic mode the action is two numbers: a
+            direction to move in, and how much to rotate.
+          </p>
+<pre><code>action = [ direction in [-pi, pi],  rotation in [-1, 1] ]</code></pre>
+          <p>
+            Each step the load moves 0.01 along <code>direction</code> and turns
+            <code>0.1 * rotation</code>. There is no mass and no momentum &mdash; the
+            load simply moves.
+          </p>
+          <p>In dynamic mode the agent pushes instead:</p>
+<pre><code>action per ant = [ push angle,  magnitude ]      (+ spin, for a single agent)</code></pre>
+          <p>
+            Having physics is even more interesting, and much closer to the ants: the
+            load has mass, it drifts, it overshoots. (The spin is there because a single
+            agent sits in the middle of the load, and pushing from the middle can never
+            turn it.)
+          </p>
+          <table>
+            <thead><tr><th>Physics</th><th class="num">Value</th></tr></thead>
+            <tbody>
+              <tr><td>Mass</td><td class="num">0.5</td></tr>
+              <tr><td>Moment of inertia</td><td class="num">0.01</td></tr>
+              <tr><td>Linear friction</td><td class="num">0.96</td></tr>
+              <tr><td>Angular friction</td><td class="num">0.94</td></tr>
+              <tr><td>Substeps per env step</td><td class="num">10</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Reward</h3>
+          <p>
+            For now I kept it as simple as possible: <strong>+1 when the load reaches
+            the goal, and 0 everywhere else</strong>. Nothing for getting closer,
+            nothing for trying. An episode ends after 500 steps if the agent did not
+            make it.
+          </p>
+        </section>
+
+        <!-- 5 ---------------------------------------------------------- -->
+        <section class="section" id="agent">
+          <h2><span class="num">05</span>The agent</h2>
+          <p>
+            For the RL agent I picked two algorithms: <strong>PPO</strong>, which is
+            on-policy, and <strong>SAC</strong>, which is off-policy. I wanted to see
+            both.
+          </p>
+          <p>
+            The network is as simple as it gets: an MLP. Both algorithms are
+            actor-critic, so one part picks the action and another part judges it. They
+            are two separate small networks: PPO uses 64x64 for each, SAC uses 256x256.
+            (SAC actually keeps two critics instead of one.)
+          </p>
+          <p>
+            Nothing special. No vision, no memory. If this task turns out to be hard, it
+            should not be because of the model.
+          </p>
+        </section>
+
+        <!-- 6 ---------------------------------------------------------- -->
+        <section class="section" id="exp1">
+          <h2><span class="num">06</span>Experiment 1: make it easy first</h2>
+          <p>
+            My first idea was the obvious one: start with a <strong>wide</strong> slit,
+            and make it narrower step by step as the agent gets better.
+          </p>
+          <p>It worked. The agent passed every stage and reached the real narrow width.</p>
+          <p>Then I looked at what it actually does:</p>
+          <figure>
+            <video src="assets/cheat_smallhead.mp4" autoplay loop muted playsinline></video>
+            <figcaption>The small-head cheat: the load slides through sideways and the big head never enters a slit.</figcaption>
+          </figure>
+          <p>
+            It never does the maneuver. It slides the load through sideways,
+            <strong>small head first</strong>. The small head fits everywhere, so that is
+            what the agent learned in the wide stages &mdash; and it kept doing it. My
+            reward did not complain, because I only asked for the centre of the load to
+            reach the goal.
+          </p>
+          <div class="callout callout--fail">
+            <p>
+              So by widening the slit I did not make the task easier. I made it a
+              <strong>different</strong> task, with a solution the real task does not
+              have.
+            </p>
+          </div>
+        </section>
+
+        <!-- 7 ---------------------------------------------------------- -->
+        <section class="section" id="exp2">
+          <h2><span class="num">07</span>Experiment 2: narrow slit, and ask for the big head</h2>
+          <p>
+            I narrowed the slit to make the task harder. And to encourage the agent to
+            go with the big head, I changed what counts as success: now the
+            <strong>big head</strong> has to arrive at the goal, not the place where the
+            agent sits.
+          </p>
+          <p>
+            Now the agent has to do the real maneuver. But both PPO and SAC failed to
+            learn the task:
+          </p>
+          <table>
+            <thead><tr><th>Run</th><th class="num">Steps</th><th class="num">Success</th></tr></thead>
+            <tbody>
+              <tr><td>PPO dynamic, sparse reward</td><td class="num">13.21M</td><td class="fail">0%</td></tr>
+              <tr><td>SAC dynamic, sparse reward</td><td class="num">2.94M</td><td class="fail">0%</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Why did it fail?</h3>
+          <p>
+            My first guess was the <strong>sparse reward</strong>. The agent is only paid
+            when it finishes. Before that, every state looks the same: reward 0. There is
+            nothing to climb, so there is nothing to learn from.
+          </p>
+          <p>
+            So I added a shaped reward: a small reward for every step that brings the
+            load closer to the goal. Now there is a signal everywhere, not only at the
+            end.
+          </p>
+          <p>It failed again:</p>
+          <table>
+            <thead><tr><th>Run</th><th class="num">Steps</th><th class="num">Success</th></tr></thead>
+            <tbody>
+              <tr><td>PPO dynamic, shaped reward</td><td class="num">14.06M</td><td class="fail">0%</td></tr>
+            </tbody>
+          </table>
+          <figure>
+            <video src="assets/policy_14000000.mp4" autoplay loop muted playsinline></video>
+            <figcaption>PPO after 14 million steps.</figcaption>
+          </figure>
+          <p>
+            After 14 million steps it has learned exactly one thing: drive at the goal.
+            It pushes the load against the wall and waits there until the episode ends.
+          </p>
+          <p>
+            So the sparse reward was not the whole story. My second guess:
+            <strong>the space of solutions is too tiny.</strong> In most positions and
+            angles the load would simply overlap a wall, so they are impossible. And to
+            pass a slit, the load has to be in the right place <em>and</em> at the right
+            angle at the same time &mdash; very few combinations do that. How tight is it? If I make the walls 3&nbsp;mm
+            thicker, the maze has no solution at all. Random exploration does not find
+            something like this.
+          </p>
+        </section>
+
+        <!-- 8 ---------------------------------------------------------- -->
+        <section class="section" id="exp3">
+          <h2><span class="num">08</span>Experiment 3: a curriculum</h2>
+          <p>
+            If the agent cannot find the solution by itself, it has to practise. It needs
+            a curriculum.
+          </p>
+          <p>The two simple ways to build a curriculum are:</p>
+          <p>
+            <strong>1. Widen the slit</strong> and narrow it step by step. But in
+            Experiment 1 we saw that this teaches the agent to cheat.
+          </p>
+          <p>
+            <strong>2. Cut the task into pieces.</strong> Let it first learn to reach the
+            goal from inside the goal room. Then from inside the corridor. Then from
+            around the real start. And finally stitch the pieces together, so it can do
+            the whole thing.
+          </p>
+          <p>The maze never changes here &mdash; only where the episode begins:</p>
+          <div class="figure-row">
+            <figure>
+              <video src="assets/1_first__step1403_len403.mp4" autoplay loop muted playsinline></video>
+              <figcaption><strong>1. start in the goal room.</strong> Easy &mdash; even a clumsy policy stumbles into the goal.</figcaption>
+            </figure>
+            <figure>
+              <video src="assets/2_early__step150542_len31.mp4" autoplay loop muted playsinline></video>
+              <figcaption><strong>2. start in the corridor.</strong> The hard part: the turn between the two slits.</figcaption>
+            </figure>
+            <figure>
+              <video src="assets/5_final__step421814_len79.mp4" autoplay loop muted playsinline></video>
+              <figcaption><strong>3. start at the real start.</strong> The whole task.</figcaption>
+            </figure>
+          </div>
+          <p>Then I ran SAC, and it was successful.</p>
+          <p>But when I looked closely, it was still cheating.</p>
+          <p>
+            My first thought was that my arena was to blame &mdash; I had drawn it by
+            hand, not from the paper. So I rebuilt the maze with the real numbers:
+          </p>
+          <figure>
+            <img src="assets/maze_dimensions.png" alt="The maze with its real measurements: slit 0.150, big head 0.175, corridor 0.211, load length 0.359.">
+            <figcaption>The maze, with the real numbers.</figcaption>
+          </figure>
+          <p>
+            It did not help. In the new maze the agent went in small head first again
+            &mdash; all 20 solutions I checked.
+          </p>
+          <figure>
+            <video src="assets/cheat_accurate_maze.mp4" autoplay loop muted playsinline></video>
+            <figcaption>Still cheating, in the accurate maze.</figcaption>
+          </figure>
+          <p>
+            Two things were wrong. My slit is still a bit too generous &mdash; in the
+            paper it is 0.81 of the big head, in mine 0.86 &mdash; so this shortcut stays
+            open. And my curriculum dropped the load at a <strong>random place and a
+            random angle</strong>, so nothing ever asked it to reach the slit with the
+            big head in front.
+          </p>
+          <div class="callout">
+            <p>The stages were mine. They were not taken from a real solution of the maze.</p>
+          </div>
+        </section>
+
+        <!-- 9 ---------------------------------------------------------- -->
+        <section class="section" id="exp4">
+          <h2><span class="num">09</span>Experiment 4: give the agent a teacher</h2>
+          <p>
+            At this point the agent had two problems. It did not know which moves were
+            real progress, and my curriculum did not know which starting poses were
+            useful.
+          </p>
+          <p>
+            So I decided to give it a teacher. Not a teacher that tells it exactly what
+            action to take, but one that already knows a real route through the maze.
+          </p>
+          <p>
+            For that, I needed a map of every situation the load can be in. Here a
+            "situation" is not only its position. Its angle matters too: the load can fit
+            at one angle and hit a wall at another, even when its centre is in the same
+            place. So each point on this map is a full pose: x, y, and angle.
+          </p>
+          <p>
+            Then I used BFS, or breadth-first search. You can think of it as flooding
+            this map backwards from the goal. The flood can move from one pose to another
+            only when that small move is legal and does not cross a wall.
+          </p>
+          <p>
+            When the flood is finished, every reachable pose has a number. The number
+            says how many small legal moves are left before the goal. A pose with
+            distance 100 is closer than one with distance 101, even if the straight-line
+            distance says otherwise.
+          </p>
+          <p>This one map gave me both things I was missing.</p>
+
+          <h3>A better reward</h3>
+          <p>
+            My old reward used the straight-line distance to the goal. But the straight
+            line goes through the walls. That is why the agent was rewarded for pushing
+            against a wall. It was also punished for turning away from the goal, even
+            though that turn is exactly what solves the maze.
+          </p>
+          <p>
+            The BFS number does not have this problem, because it counts the moves
+            along the real route. So the new reward is simple: the agent gains when the
+            number goes down, and loses when it goes up. Turning the load to line it up
+            with the slit brings the number down, so turning now pays. Pushing the small
+            head into the dead end sends it up, so the dead end costs.
+          </p>
+
+          <h3>Better starting poses</h3>
+          <p>
+            BFS also gives me a valid path from the start to the goal. I picked 16 poses
+            along that path and used them as the curriculum stages.
+          </p>
+          <figure>
+            <img src="assets/curriculum_anchors.png" alt="The 16 curriculum stages, drawn as the load itself, coloured from dark blue near the goal to dark red at the real start.">
+            <figcaption>The 16 curriculum stages.</figcaption>
+          </figure>
+          <p>
+            Read the colours from dark blue to dark red. Stage 0 is almost at the goal,
+            and stage 15 is the real start. In other words, the picture shows the
+            solution backwards, including the important turn between the two slits.
+          </p>
+          <p>
+            The agent learns it in the same order: first the last piece, then the piece
+            before it, and so on. It moves to the next stage only when it reaches 90%
+            success on the current one. A stage is never skipped just because it is
+            taking too long.
+          </p>
+        </section>
+
+        <!-- 10 --------------------------------------------------------- -->
+        <section class="section" id="result">
+          <h2><span class="num">10</span>Two last fixes, and the result</h2>
+          <p>
+            With the teacher in place I moved to the hard mode: <strong>dynamic</strong>,
+            with real forces and momentum. Two more things were needed there.
+          </p>
+          <p>
+            <strong>Do not forget the rare win.</strong> SAC learns from a big pool of
+            past experience. Wins through the slit are rare, so they drown in that pool
+            and get forgotten. So I keep successful episodes in a second pool, and force
+            25% of every training batch to come from it.
+          </p>
+          <p>
+            <strong>Let the agent feel its own speed.</strong> With momentum the load
+            drifts and overshoots, but my observation only had position and angle &mdash;
+            not speed. That is like driving while you can see where you are, but not how
+            fast you are moving. Adding the velocity took the observation from 25 numbers
+            to 27.
+          </p>
+          <div class="callout callout--result">
+            <p>
+              <span class="result-number">100% success in 247,519 steps</span>
+              about two hours on one machine, and 56 times fewer steps than the
+              14-million-step run that learned nothing.
+            </p>
+          </div>
+          <figure>
+            <video src="assets/eval_ep01_len153_ret1.76.mp4" autoplay loop muted playsinline></video>
+            <figcaption>The solved task: big head into the first slit, turn in the corridor, small head out of the second.</figcaption>
+          </figure>
+          <p>
+            But the number I actually cared about was not the success rate. It was
+            <em>how</em> it solves the maze. So I replayed the last 25 solutions and
+            checked which head goes through each slit first:
+          </p>
+<pre><code>slit 1 entered first by :  BIG head    25 / 25
+slit 2 exited  first by :  small head  25 / 25</code></pre>
+          <p>
+            Every single one. Big head into the first slit, turn in the corridor, small
+            head out of the second &mdash; the same maneuver as the ants, in real
+            physics, with no shortcuts.
+          </p>
+        </section>
+
+        <!-- 11 --------------------------------------------------------- -->
+        <section class="section" id="next">
+          <h2><span class="num">11</span>What is next</h2>
+          <p>One agent can now do it. But one agent is not what the ants do.</p>
+          <p>
+            The next step is <strong>many agents on the same load</strong>. Each one
+            pushes at its own point, sees only its own local view, and feels the others
+            only through the load it is holding. No leader, no plan, no messages &mdash;
+            the same setting the ants are in. That is the part I am really curious about:
+            whether a group can find this maneuver together, and whether it gets better
+            with more agents, as the ants do and people do not.
+          </p>
+          <p>
+            There is also plenty left to improve in what already exists. My slit is still
+            a bit wider than the paper's. The teacher is a strong crutch &mdash; I would
+            like to see how far one can get with a weaker one. And I only ran the teacher
+            setup with SAC, never with PPO.
+          </p>
+        </section>
+
+        <!-- code ------------------------------------------------------- -->
+        <section class="section" id="code">
+          <h2>Come and play with it</h2>
+          <p>The code is on GitHub, and it is open:</p>
+          <div class="actions">
+            <a class="button button--primary" href="https://github.com/RezaKakooee/ant-piano-movers-rl">github.com/RezaKakooee/ant-piano-movers-rl</a>
+          </div>
+          <p>
+            It is a normal gym environment, so you can drop your own algorithm on it in a
+            few lines. Everything in this post &mdash; the maze, the configs, the
+            curriculum, the BFS teacher &mdash; is in there, and the browser sandbox
+            needs no install at all.
+          </p>
+          <p>
+            If you find a better way, break something, or make the agent cheat in a way I
+            did not think of, I would love to hear about it. Open an issue, send a pull
+            request, or just write to me. And if you work on collective behaviour or
+            multi-agent RL and this is close to your area, please get in touch &mdash; I
+            would enjoy the conversation.
+          </p>
+        </section>
+
+        <!-- cite ------------------------------------------------------- -->
+        <section class="section" id="cite">
+          <h2>Cite this post</h2>
+          <p>
+            If this environment or write-up is useful in your work, you can cite it as
+            a blog post:
+          </p>
+<pre><code>@misc{kakooee2026antswarm,
+  author       = {Kakooee, Reza},
+  title        = {Can an {AI} Agent Solve the Puzzle That Ants Solve?},
+  year         = {2026},
+  howpublished = {\url{https://rezakakooee.github.io/ant-piano-movers-rl/}},
+  note         = {Blog post. Code: \url{https://github.com/RezaKakooee/ant-piano-movers-rl}}
+}</code></pre>
+          <p>Or in plain text:</p>
+          <p class="mono" style="font-size:.9rem;color:var(--muted)">
+            Kakooee, R. (2026). <em>Can an AI agent solve the puzzle that ants solve?</em>
+            Blog post. https://rezakakooee.github.io/ant-piano-movers-rl/
+          </p>
+          <p>
+            Please also cite the experiment this work reproduces:
+          </p>
+<pre><code>@article{dreyer2025ants,
+  author  = {Dreyer, Tabea and Haluts, Amir and Korman, Amos and
+             Gov, Nir and Fonio, Ehud and Feinerman, Ofer},
+  title   = {Comparing cooperative geometric puzzle solving in ants versus humans},
+  journal = {Proceedings of the National Academy of Sciences},
+  year    = {2025},
+  doi     = {10.1073/pnas.2414274121}
+}</code></pre>
+        </section>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="inner">
+        <p>
+          Reference: Dreyer et&nbsp;al., &ldquo;Comparing cooperative geometric puzzle
+          solving in ants versus humans&rdquo;, PNAS 2025.
+        </p>
+        <div>
+          <a href="https://github.com/RezaKakooee/ant-piano-movers-rl">GitHub</a>
+          <a href="https://x.com/rezakakooee">X</a>
+          <a href="https://www.linkedin.com/in/reza-kakooee/">LinkedIn</a>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

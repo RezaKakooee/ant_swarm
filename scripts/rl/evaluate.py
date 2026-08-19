@@ -73,17 +73,11 @@ def _resolve_target(target_str: str) -> tuple[Path, Path, str]:
 
 
 def _save_gif(frames: list[np.ndarray], out_path: Path, fps: int = 30):
-    import matplotlib.pyplot as plt
-    from matplotlib.animation import FuncAnimation, PillowWriter
-    h, w = frames[0].shape[:2]
-    fig, ax = plt.subplots(figsize=(6.5, 6.5 * h / w))
-    im = ax.imshow(frames[0])
-    ax.set_axis_off()
-    anim = FuncAnimation(fig, lambda i: [im.set_data(frames[i]) or im],
-                         frames=len(frames), interval=1000 / fps, blit=True)
+    from PIL import Image
+    imgs = [Image.fromarray(f) for f in frames]
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    anim.save(str(out_path), writer=PillowWriter(fps=fps))
-    plt.close(fig)
+    imgs[0].save(str(out_path), save_all=True, append_images=imgs[1:], loop=0,
+                 duration=max(1, int(1000 / fps)), optimize=True)
 
 
 def _save_mp4(frames: list[np.ndarray], out_path: Path, fps: int = 30):

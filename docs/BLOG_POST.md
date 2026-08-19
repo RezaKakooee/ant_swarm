@@ -66,7 +66,7 @@ In this regime:
 - The agent does **not** need a curriculum. Starting directly from the full start pose ($x=0.30, y=0.36, \theta=\pi$), the agent discovers the passage through random exploration within 5,000 steps.
 - Within **25,000 steps**, the Soft Actor-Critic policy reaches a **100% success rate**, navigating from start to goal in just **54 steps**.
 
-![Easy Task 5-Episode Rollout](/home/azureuser/.gemini/antigravity-ide/brain/246b2e36-5525-434f-876f-f812c9ee8c9b/eval_easy_5episodes_grid.gif)
+![Easy Task 5-Episode Rollout](../blogs/01_single_agent/assets/eval_all_5episodes_grid.gif)
 
 *The agent drives the T-load directly through both wide openings with minimal rotational adjustment.*
 
@@ -135,7 +135,7 @@ Every completed success is retained in a dedicated buffer. During minibatch trai
 
 The policy mastered all 16 stages in **247,519 steps**, achieving a **100% full-task success rate**.
 
-![Canonical Hard Task 5-Episode Rollout](/home/azureuser/.gemini/antigravity-ide/brain/246b2e36-5525-434f-876f-f812c9ee8c9b/eval_all_5episodes_grid.gif)
+![Canonical Hard Task 5-Episode Rollout](../blogs/01_single_agent/assets/eval_all_5episodes_grid.gif)
 
 *The policy executes the full 3-phase sequence: Big-first entry $\to$ $180^\circ$ chamber spin $\to$ Small-first exit.*
 

@@ -55,7 +55,7 @@ together). Current stage: single agent.
    videos in `<run>/eval/`. Simple-English explanation of the three changes:
    [../notes/what_made_it_work.md](../notes/what_made_it_work.md).
 
-   (Earlier scicore attempts on rtx4090/a100 were slow — ~11-55 steps/s, CPU
+   (Earlier HPC-cluster attempts on rtx4090/a100 were slow — ~11-55 steps/s, CPU
    bound — and were cancelled in favour of the Azure box.)
 
 ## Where things are
@@ -72,7 +72,7 @@ together). Current stage: single agent.
 | W&B | https://wandb.ai/kakooee/ant_swarm (run name = run dir name = log name) |
 | Design notes / glossary | `notes/rl_design_notes.md`, `notes/rl_concepts.md`, `notes/tutorial.md`, `notes/english_words.md` |
 
-Key run dirs on the scicore server (not in git):
+Key run dirs on the HPC cluster (not in git):
 
 - `storage_local/ant__20260813_0158__20384223__train_sac__pnas_kin_geo_v2` — v2 kinematic, MASTERED
 - `storage_local/ant__20260813_1133__20432145__train_sac__pnas_dyn_geo_v2` — v2 dynamic, running

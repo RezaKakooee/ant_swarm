@@ -98,15 +98,10 @@ def _frames_for(traj: dict, cfg, img_width: int = 650, stride: int = 1) -> list:
 
 
 def _save_gif(frames: list, out: Path, fps: int):
-    import matplotlib.pyplot as plt
-    from matplotlib.animation import FuncAnimation, PillowWriter
-    h, w = frames[0].shape[:2]
-    fig, ax = plt.subplots(figsize=(6.5, 6.5 * h / w))
-    im = ax.imshow(frames[0]); ax.set_axis_off()
-    anim = FuncAnimation(fig, lambda i: [im.set_data(frames[i]) or im],
-                         frames=len(frames), interval=1000 / fps, blit=True)
-    anim.save(str(out), writer=PillowWriter(fps=fps))
-    plt.close(fig)
+    from PIL import Image
+    imgs = [Image.fromarray(f) for f in frames]
+    imgs[0].save(str(out), save_all=True, append_images=imgs[1:], loop=0,
+                 duration=max(1, int(1000 / fps)), optimize=True)
 
 
 def render_trajectory(json_path: Path, index: int = 0, out: Path | None = None, fps: int = 30) -> Path:

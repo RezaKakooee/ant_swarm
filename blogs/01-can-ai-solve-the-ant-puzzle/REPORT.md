@@ -1,6 +1,6 @@
 # Experiment Analysis & Technical Report: Dynamic PNAS Piano-Movers (v2)
 
-**Experiment Identifier**: [`ant__20260814_1230__local-1427853__train_sac__pnas_dyn_geo_v2`](file:///home/azureuser/ant_swarm/storage_local/ant__20260814_1230__local-1427853__train_sac__pnas_dyn_geo_v2)  
+**Experiment Identifier**: [`ant__20260814_1230__local-1427853__train_sac__pnas_dyn_geo_v2`](https://github.com/RezaKakooee/ant_swarm/blob/main/storage_local/ant__20260814_1230__local-1427853__train_sac__pnas_dyn_geo_v2)  
 **Task**: Single-agent dynamic piano-movers problem (Dreyer et al., PNAS 2025 replica).  
 **Status**: **MASTERED (100% Full-Task Success Rate)** at step 247,519.
 
@@ -23,7 +23,7 @@ Start  │    │    Chamber    │      │  Goal
 
 The load must enter the first slit **big-head-first**, rotate $180^\circ$ inside the narrow chamber, and exit the second slit **small-head-first**.
 
-![5-Episode Evaluation Grid](/home/azureuser/.gemini/antigravity-ide/brain/246b2e36-5525-434f-876f-f812c9ee8c9b/eval_all_5episodes_grid.gif)
+![5-Episode Evaluation Grid](assets/eval_all_5episodes_grid.gif)
 
 ---
 
@@ -42,9 +42,9 @@ graph TD
 ```
 
 ### Algorithm: Soft Actor-Critic (SAC) + Success Replay Buffer
-- **Base Algorithm**: Off-policy Soft Actor-Critic ([`train_sac.py`](file:///home/azureuser/ant_swarm/scripts/rl/train_sac.py)) with Gaussian policy (`MlpPolicy` $[256, 256]$).
+- **Base Algorithm**: Off-policy Soft Actor-Critic ([`train_sac.py`](https://github.com/RezaKakooee/ant_swarm/blob/main/scripts/rl/train_sac.py)) with Gaussian policy (`MlpPolicy` $[256, 256]$).
 - **Entropy Tuning**: Automatic entropy adjustment (`ent_coef: auto_0.05`, `target_entropy: -1.5`).
-- **Success-Prioritized Replay** ([`success_replay_buffer.py`](file:///home/azureuser/ant_swarm/scripts/rl/success_replay_buffer.py)):
+- **Success-Prioritized Replay** ([`success_replay_buffer.py`](https://github.com/RezaKakooee/ant_swarm/blob/main/scripts/rl/success_replay_buffer.py)):
   - Retains completed successful trajectories in a dedicated ring buffer (capacity: 200,000).
   - Enforces **25% of each training minibatch (64 / 256)** to be sampled from verified successful episodes.
   - This prevents catastrophic forgetting of rare narrow-slit traversals.
@@ -67,7 +67,7 @@ graph TD
 - **Wall Gap Annealing (Widening slits)**: Causes severe negative transfer. In a wider gap, the agent learns a "pirouette shortcut" (poking the small head in first), which is physically impossible in the canonical narrow gap.
 - **Random X-band Reverse**: Sampling random $(y, \theta)$ in an $x$-window produces un-navigable or already-colliding poses.
 
-### The Solution: Pose-Path Curriculum ([`pose_curriculum.py`](file:///home/azureuser/ant_swarm/scripts/rl/pose_curriculum.py))
+### The Solution: Pose-Path Curriculum ([`pose_curriculum.py`](https://github.com/RezaKakooee/ant_swarm/blob/main/scripts/rl/pose_curriculum.py))
 1. **Offline BFS Trajectory Extraction**: A breadth-first search over collision-free $(x, y, \theta)$ state-space extracts the exact optimal solution manifold.
 2. **16 Discrete Anchors**: Placed along the solution path from near-goal (Stage 0: $x \approx 1.15$) backwards to the full task start (Stage 15: $x = 0.30, y = 0.36, \theta = \pi$).
 3. **Mastery-Only Advancement**:
@@ -88,7 +88,7 @@ In this maze, Euclidean distance to the goal is deceptive:
 - Rotating the object to face the goal attempts a small-head entry that gets wedged in the slit.
 
 ### The Geodesic Reward
-The reward field is computed over the discretized $(x, y, \theta)$ grid with wall inflation ([`gen_geodesic_field.py`](file:///home/azureuser/ant_swarm/scripts/rl/gen_geodesic_field.py)):
+The reward field is computed over the discretized $(x, y, \theta)$ grid with wall inflation ([`gen_geodesic_field.py`](https://github.com/RezaKakooee/ant_swarm/blob/main/scripts/rl/gen_geodesic_field.py)):
 
 $$r_t = \gamma \cdot \Phi(s_t) - \Phi(s_{t-1}) + R_{\text{terminal}}$$
 
@@ -129,4 +129,4 @@ EVALUATION RESULTS SUMMARY (Full Hard Task)
 ```
 
 - **Stochastic Action Test**: 3 / 3 episodes solved ($100\%$ success, mean $156.7$ steps).
-- **Artifacts Saved**: Individual MP4/GIF videos and grid summaries located in [`storage_local/.../eval/`](file:///home/azureuser/ant_swarm/storage_local/ant__20260814_1230__local-1427853__train_sac__pnas_dyn_geo_v2/eval).
+- **Artifacts Saved**: Individual MP4/GIF videos and grid summaries located in [`storage_local/.../eval/`](https://github.com/RezaKakooee/ant_swarm/blob/main/storage_local/ant__20260814_1230__local-1427853__train_sac__pnas_dyn_geo_v2/eval).
