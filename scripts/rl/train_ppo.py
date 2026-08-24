@@ -139,7 +139,11 @@ class RenderCallback(BaseCallback):
         if self.pose is not None:
             env.set_spawn_pose(self.pose)
         flat_env = FlattenObservation(env)
-        obs, _ = flat_env.reset(seed=self.seed)
+        # fixed seed only for pinned (curriculum) scenes; vary otherwise so
+        # random-start / random-goal runs show a fresh episode each snapshot
+        seed = self.seed if self.pose is not None \
+            else self.seed + self.num_timesteps
+        obs, _ = flat_env.reset(seed=seed)
 
         frames = [env.render()]
         done = False
@@ -184,9 +188,13 @@ class RenderCallback(BaseCallback):
             pass
 
 
-def make_env(cfg, seed: int = 0):
+def make_env(cfg, seed: int = 0, training: bool = False):
     def _init():
         env = AntSwarmEnv(config=cfg, seed=seed)
+        icfg = getattr(cfg.env, "intrinsic", None)
+        if training and icfg is not None and bool(getattr(icfg, "enabled", False)):
+            from intrinsic import IntrinsicRewardWrapper
+            env = IntrinsicRewardWrapper(env, icfg)
         env = FlattenObservation(env)
         return env
     return _init
@@ -223,7 +231,7 @@ def train(cfg, s):
         logger.warning(f"wandb init failed — continuing without tracking: {e}")
         s["wandb"] = False
 
-    vec_env = VecMonitor(DummyVecEnv([make_env(cfg, seed=i) for i in range(s["n_envs"])]))
+    vec_env = VecMonitor(DummyVecEnv([make_env(cfg, seed=i, training=True) for i in range(s["n_envs"])]))
     eval_env = VecMonitor(DummyVecEnv([make_env(cfg, seed=999)]))
 
     model = PPO(

@@ -55,6 +55,11 @@ run_job() {
     fi
     export DS_BUILD_OPS=0
     export DS_SKIP_CUDA_CHECK=1
+    # ANT_SWARM_FORCE_CPU=1 -> run without a GPU. These jobs are CPU-bound
+    # (pure-NumPy env), so this avoids GPU queues and contention entirely.
+    if [ "${ANT_SWARM_FORCE_CPU:-0}" = "1" ]; then
+        export CUDA_VISIBLE_DEVICES=""
+    fi
     export MUJOCO_GL=egl
     export PYTHONNOUSERSITE=1
 

@@ -44,8 +44,12 @@ class PoseGeodesicField:
             except (TypeError, ValueError, json.JSONDecodeError) as exc:
                 raise ValueError(f"invalid geodesic field metadata in {p}") from exc
 
-    def validate_config(self, cfg) -> None:
-        """Reject a field generated for different task geometry."""
+    def validate_config(self, cfg, check_goal: bool = True) -> None:
+        """Reject a field generated for different task geometry.
+
+        ``check_goal=False`` when several fields are loaded, one per goal:
+        the geometry must match, but each field has its own goal.
+        """
         if not self.meta:
             return
         s = float(cfg.scene_scale)
@@ -68,6 +72,8 @@ class PoseGeodesicField:
         mismatches = []
         for key, wanted in expected.items():
             if key not in self.meta:
+                continue
+            if not check_goal and key == "goal":
                 continue
             actual = self.meta[key]
             if isinstance(wanted, str):

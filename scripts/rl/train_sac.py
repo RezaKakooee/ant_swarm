@@ -30,11 +30,14 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from ant_swarm import (AntSwarmEnv, build_run_id, load_config_cli,  # noqa: E402
                        save_code, setup_logging)
-from train_utils import (SuccessTrajectoryCallback, build_curriculum,  # noqa: E402
-                         pin_eval_hard, pin_standalone_eval_hard,
-                         prepare_curriculum)
+from train_utils import (ResumeWarmupCallback, SuccessTrajectoryCallback,  # noqa: E402
+                         build_curriculum, pin_eval_hard,
+                         pin_standalone_eval_hard, prepare_curriculum)
 from success_replay_buffer import (SuccessReplayBuffer,  # noqa: E402
                                    seed_success_trajectories)
+from goal_env import GoalObsWrapper  # noqa: E402
+from intrinsic import IntrinsicRewardWrapper  # noqa: E402
+from stable_baselines3 import HerReplayBuffer  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STORAGE_DIR  = PROJECT_ROOT / "storage_local"
@@ -57,6 +60,9 @@ SAC_DEFAULTS = dict(
     learning_starts=10_000, gamma=0.99, tau=0.005, learning_rate=3e-4,
     ent_coef="auto", success_buffer_size=200_000,
     success_batch_fraction=0.25, target_entropy="auto",
+    resume_warmup_steps=0, success_replay=True,
+    her_enabled=False, her_n_sampled_goal=4, her_strategy="future",
+    use_sde=False, sde_sample_freq=-1,
 )
 
 
@@ -66,7 +72,27 @@ def _settings(cfg) -> dict:
     sac = getattr(cfg, "sac", None)
     s = {k: getattr(run, k, d) for k, d in RUN_DEFAULTS.items()}
     s.update({k: getattr(sac, k, d) for k, d in SAC_DEFAULTS.items()})
+    her = getattr(sac, "her", None)          # nested block wins over flat keys
+    if her is not None:
+        s["her_enabled"] = bool(getattr(her, "enabled", s["her_enabled"]))
+        s["her_n_sampled_goal"] = int(getattr(her, "n_sampled_goal", s["her_n_sampled_goal"]))
+        s["her_strategy"] = str(getattr(her, "strategy", s["her_strategy"]))
     return s
+
+
+def wrap_env(cfg, env, training: bool = False):
+    """All env-level switches live here. Intrinsic reward wraps the TRAINING
+    env only — eval and render must measure the true task reward. HER needs
+    the Dict goal layout, everything else uses the flat observation."""
+    icfg = getattr(cfg.env, "intrinsic", None)
+    if training and icfg is not None and bool(getattr(icfg, "enabled", False)):
+        env = IntrinsicRewardWrapper(env, icfg)
+        logger.info(f"Intrinsic reward on: mode={getattr(icfg, 'mode', 'count')} "
+                    f"coef={getattr(icfg, 'coef', 0.01)}")
+    her = getattr(getattr(cfg, "sac", None), "her", None)
+    if her is not None and bool(getattr(her, "enabled", False)):
+        return GoalObsWrapper(env)
+    return FlattenObservation(env)
 
 
 def _make_run_name(n_ants: int) -> str:
@@ -110,8 +136,13 @@ class RenderCallback(BaseCallback):
             env.set_wall_length(self.wall_len)
         if self.pose is not None:
             env.set_spawn_pose(self.pose)
-        flat_env = FlattenObservation(env)
-        obs, _ = flat_env.reset(seed=self.seed)
+        flat_env = wrap_env(self.cfg, env)
+        # Pinned pose (curriculum): keep the fixed seed so snapshots compare a
+        # constant scene. Otherwise vary the seed per snapshot so random-start /
+        # random-goal runs show a fresh episode each time.
+        seed = self.seed if self.pose is not None \
+            else self.seed + self.num_timesteps
+        obs, _ = flat_env.reset(seed=seed)
 
         frames = [env.render()]
         done = False
@@ -177,11 +208,9 @@ class EpisodeMetricsCallback(BaseCallback):
         return True
 
 
-def make_env(cfg, seed: int = 0):
+def make_env(cfg, seed: int = 0, training: bool = False):
     def _init():
-        env = AntSwarmEnv(config=cfg, seed=seed)
-        env = FlattenObservation(env)
-        return env
+        return wrap_env(cfg, AntSwarmEnv(config=cfg, seed=seed), training=training)
     return _init
 
 
@@ -190,19 +219,33 @@ def _resume_signature(cfg) -> dict:
     def plain(node):
         return OmegaConf.to_container(node, resolve=True)
 
+    # Keys that change WHICH goal is active but not the dynamics or the meaning
+    # of the reward. The goal is part of the observation (goal_dx, goal_dy), so a
+    # critic trained on one goal is a valid starting point for others.
+    env_cmp = plain(cfg.env)
+    for key in ("geodesic_field", "geodesic_fields", "reward_dist_coef",
+                "reward_mode"):     # normalised separately below
+        env_cmp.pop(key, None)
+    goal_cmp = plain(cfg.goal)
+    goal_cmp.pop("random_positions", None)
+    goal_cmp.pop("random_box", None)
+
+    # geodesic_exit is the same reward family as geodesic (shaping + the same
+    # terminal bonus), so a geodesic-phase model is a valid resume point.
+    mode = str(getattr(cfg.env, "reward_mode", "shaped"))
     return {
-        "reward_mode": str(getattr(cfg.env, "reward_mode", "shaped")),
+        "reward_mode": {"geodesic_exit": "geodesic"}.get(mode, mode),
         "observe_linear_velocity": getattr(
             cfg.env, "observe_linear_velocity", None
         ),
         "goal_track": str(getattr(cfg.env, "goal_track", "center")),
-        "env": plain(cfg.env),
+        "env": env_cmp,
         "max_steps": int(cfg.env.max_steps),
         "scene_scale": float(cfg.scene_scale),
         "world": plain(cfg.world),
         "walls": plain(cfg.walls),
         "tshape": plain(cfg.tshape),
-        "goal": plain(cfg.goal),
+        "goal": goal_cmp,
         "ants": plain(cfg.ants),
         "motion": plain(cfg.motion),
         "physics": plain(cfg.physics),
@@ -263,11 +306,37 @@ def _build_sac_model(env, cfg, s, tb_dir: Path, reach_radius: float):
     if resume_replay and not resume_model:
         raise ValueError("run.resume_replay requires run.resume_model")
 
-    replay_kwargs = {
-        "success_buffer_size": int(s["success_buffer_size"]),
-        "success_batch_fraction": float(s["success_batch_fraction"]),
-        "reach_radius": float(reach_radius),
-    }
+    # Replay/policy are config switches: HER > success replay > plain buffer.
+    if s["her_enabled"]:
+        if resume_replay:
+            raise ValueError("run.resume_replay is incompatible with sac.her")
+        if s["seed_successes_from"] and isinstance(model.replay_buffer, SuccessReplayBuffer):
+            raise ValueError("run.seed_successes_from is incompatible with sac.her")
+        if str(getattr(cfg.env, "reward_mode", "shaped")) != "sparse":
+            logger.warning("HER relabels rewards sparsely; env.reward_mode is "
+                           f"'{cfg.env.reward_mode}', mixing shaped real rewards "
+                           "with sparse relabeled ones is usually wrong")
+        policy = "MultiInputPolicy"
+        replay_cls = HerReplayBuffer
+        replay_kwargs = {
+            "n_sampled_goal": int(s["her_n_sampled_goal"]),
+            "goal_selection_strategy": str(s["her_strategy"]),
+        }
+        logger.info(f"HER on: n_sampled_goal={s['her_n_sampled_goal']}, "
+                    f"strategy={s['her_strategy']} (success replay off)")
+    elif s["success_replay"]:
+        policy = "MlpPolicy"
+        replay_cls = SuccessReplayBuffer
+        replay_kwargs = {
+            "success_buffer_size": int(s["success_buffer_size"]),
+            "success_batch_fraction": float(s["success_batch_fraction"]),
+            "reach_radius": float(reach_radius),
+        }
+    else:
+        policy = "MlpPolicy"
+        replay_cls = None                    # SB3 default ReplayBuffer
+        replay_kwargs = None
+        logger.info("Success replay OFF (sac.success_replay=false)")
 
     if resume_model:
         _validate_exact_resume(resume_model, cfg)
@@ -275,7 +344,7 @@ def _build_sac_model(env, cfg, s, tb_dir: Path, reach_radius: float):
             resume_model,
             env=env,
             tensorboard_log=str(tb_dir),
-            replay_buffer_class=SuccessReplayBuffer,
+            replay_buffer_class=replay_cls,
             replay_buffer_kwargs=replay_kwargs,
         )
         if resume_replay:
@@ -293,6 +362,12 @@ def _build_sac_model(env, cfg, s, tb_dir: Path, reach_radius: float):
                 f"(regular={model.replay_buffer.size()}, "
                 f"success={model.replay_buffer.success_size})"
             )
+        # A loaded model keeps the learning rate it was saved with. Fine-tuning
+        # on a new goal distribution wants a gentler one, so re-apply the config.
+        if float(s["learning_rate"]) != float(model.learning_rate):
+            logger.info(f"Resume: learning rate {model.learning_rate} -> {s['learning_rate']}")
+            model.learning_rate = float(s["learning_rate"])
+            model._setup_lr_schedule()
         logger.info(
             f"Resumed SAC model: {resume_model} "
             f"(timesteps={model.num_timesteps})"
@@ -300,7 +375,7 @@ def _build_sac_model(env, cfg, s, tb_dir: Path, reach_radius: float):
         return model, True
 
     model = SAC(
-        "MlpPolicy",
+        policy,
         env,
         buffer_size=s["buffer_size"],
         batch_size=s["batch_size"],
@@ -310,9 +385,11 @@ def _build_sac_model(env, cfg, s, tb_dir: Path, reach_radius: float):
         ent_coef=s["ent_coef"],
         target_entropy=s["target_entropy"],
         learning_rate=s["learning_rate"],
+        use_sde=bool(s["use_sde"]),
+        sde_sample_freq=int(s["sde_sample_freq"]),
         train_freq=1,
         gradient_steps=1,
-        replay_buffer_class=SuccessReplayBuffer,
+        replay_buffer_class=replay_cls,
         replay_buffer_kwargs=replay_kwargs,
         verbose=1,
         tensorboard_log=str(tb_dir),
@@ -367,7 +444,7 @@ def train(cfg, s):
         s["wandb"] = False
 
     # SAC works with a single env (off-policy; parallelism via replay buffer, not rollouts)
-    env = VecMonitor(DummyVecEnv([make_env(cfg, seed=0)]))
+    env = VecMonitor(DummyVecEnv([make_env(cfg, seed=0, training=True)]))
     eval_env = VecMonitor(DummyVecEnv([make_env(cfg, seed=999)]))
 
     reach = float(cfg.goal.reach_radius)
@@ -423,12 +500,42 @@ def train(cfg, s):
     if cur is not None and getattr(cur, "enabled", False):
         curriculum = build_curriculum(cur, reach, cfg=cfg)
         prepare_curriculum(env, curriculum)
-        if getattr(cur, "mode", "gap") == "pose_path":
+        free_final = getattr(cur, "final_spawn_x_range", None) is not None
+        if getattr(cur, "mode", "gap") == "pose_path" and not free_final:
             render_callback.pin_pose(curriculum.anchors[-1], curriculum.wall_len)
         callbacks.append(curriculum)
-        pin_eval_hard(eval_env, cur, curriculum)
+        if free_final:
+            # random-everything run: eval measures the real task (random start
+            # + random goal from the config) for the whole training
+            logger.info("Curriculum ends in FREE SPAWN; eval env left unpinned")
+        else:
+            pin_eval_hard(eval_env, cur, curriculum)
         logger.info(f"Curriculum mode: {getattr(cur, 'mode', 'gap')}  "
                     f"(reward_mode={getattr(cfg.env, 'reward_mode', 'shaped')})")
+
+    # a resumed model starts with an EMPTY replay buffer, so the first gradient
+    # steps would fit 256 samples drawn from a handful of transitions and wreck
+    # the policy. Collect with the trained policy first, update only after.
+    warmup = int(s["resume_warmup_steps"]) if resumed else 0
+    if warmup > 0:
+        callbacks.append(ResumeWarmupCallback(warmup))
+        logger.info(f"Resume warm-up: no gradient steps for the first {warmup} steps")
+
+    # optional goal curriculum (random-goal training): widen the goal set on mastery
+    gc = getattr(cfg, "goal_curriculum", None)
+    if gc is not None and getattr(gc, "enabled", False):
+        from goal_curriculum import GoalCurriculumCallback
+        goal_cur = GoalCurriculumCallback(
+            gc.stages,
+            success_threshold=float(getattr(gc, "success_threshold", 0.7)),
+            window=int(getattr(gc, "window", 100)),
+            reach_radius=reach,
+        )
+        goal_cur.prepare_env(env)
+        goal_cur.prepare_env(eval_env, final=True)   # eval always on the full goal set
+        callbacks.append(goal_cur)
+        logger.info(f"Goal curriculum: {len(gc.stages)} stages, "
+                    f"{[len(s) for s in gc.stages]} goals per stage")
 
     if s["wandb"]:
         from wandb.integration.sb3 import WandbCallback
@@ -530,7 +637,7 @@ def evaluate(cfg, s):
     if cur is not None and getattr(cur, "enabled", False):
         curriculum = build_curriculum(cur, reach, cfg=cfg)
         pin_standalone_eval_hard(raw_env, cur, curriculum)
-    env = FlattenObservation(raw_env)
+    env = wrap_env(cfg, raw_env)
     model = SAC.load(str(model_file), env=env)
 
     render_eval = bool(s.get("eval_render", True))

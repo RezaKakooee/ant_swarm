@@ -100,6 +100,8 @@ class SuccessTrajectoryCallback(BaseCallback):
 
     def _on_step(self) -> bool:
         obs = self.model._last_obs                                   # pre-step obs
+        if isinstance(obs, dict):          # HER: Dict obs; keep the flat part
+            obs = obs["observation"]
         actions = self.locals.get("clipped_actions", self.locals["actions"])
         rewards = self.locals["rewards"]
         dones = self.locals["dones"]
@@ -138,6 +140,9 @@ class SuccessTrajectoryCallback(BaseCallback):
             "wall_len": float(info.get("wall_len", float("nan"))),  # curriculum stage / layout
             "gap": float(info.get("gap", float("nan"))),
             "curriculum_stage": int(info.get("curriculum_stage", -1)),
+            # which goal this episode used (random-goal training); needed to
+            # replay or render the episode faithfully
+            "goal": [float(v) for v in info["goal"]] if "goal" in info else None,
             # metadata (derivable, kept for convenience/filtering):
             "length": length,
             "episode_return": ret,
@@ -368,3 +373,33 @@ def pin_standalone_eval_hard(env, cur, curriculum=None) -> None:
         env.set_spawn_x_range(cur.target_spawn_x - band, cur.target_spawn_x + band)
     else:
         env.set_wall_length(float(cur.target_wall_len))
+
+
+class ResumeWarmupCallback(BaseCallback):
+    """Act with the loaded policy but hold off gradient steps for N timesteps.
+
+    SB3's own ``learning_starts`` would also stop updates, but it makes the agent
+    take *random* actions meanwhile, which throws away the very policy we are
+    fine-tuning. Zeroing ``gradient_steps`` keeps the policy driving while the
+    replay buffer refills.
+    """
+
+    def __init__(self, warmup_steps: int, verbose: int = 0):
+        super().__init__(verbose)
+        self.warmup_steps = int(warmup_steps)
+        self._start = None
+        self._saved = None
+
+    def _on_training_start(self) -> None:
+        self._start = self.model.num_timesteps
+        self._saved = self.model.gradient_steps
+        self.model.gradient_steps = 0
+
+    def _on_step(self) -> bool:
+        if self._saved is not None and \
+                self.model.num_timesteps - self._start >= self.warmup_steps:
+            self.model.gradient_steps = self._saved
+            logger.info(f"[resume warm-up] over at {self.model.num_timesteps} steps; "
+                        f"buffer={self.model.replay_buffer.size()}; updates resume")
+            self._saved = None
+        return True

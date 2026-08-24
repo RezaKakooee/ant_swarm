@@ -1,0 +1,137 @@
+scene_scale: 1.0
+world:
+  width: 1.65
+  height: 0.72
+walls:
+  x_columns:
+  - 0.758
+  - 0.979
+  length: 0.285
+  thickness: 0.01
+  render_extra: 0.2
+  height: 0.08
+tshape:
+  stem_len: 0.3315
+  cap_big_len: 0.1748
+  cap_small_len: 0.0874
+  thickness: 0.027
+  z: 0.02
+  height: 0.04
+goal:
+  pos:
+  - 1.2
+  - 0.36
+  reach_radius: 0.06
+  random_box:
+  - - 1.05
+    - 0.1
+  - - 1.55
+    - 0.62
+spawn:
+  x_range:
+  - 0.06
+  - 0.52
+  angle_range:
+  - -3.14159265
+  - 3.14159265
+  margin: 0.06
+  max_tries: 500
+  resample_each_reset: true
+ants:
+  n: 1
+  single_agent_spin: true
+  radius: 0.005
+  z: 0.04
+  mass: 0.001
+motion:
+  mode: dynamic
+  step_len: 0.01
+  rot_step: 0.1
+physics:
+  push_strength: 0.0005
+  object_mass: 0.5
+  object_inertia: 0.01
+  linear_friction: 0.96
+  angular_friction: 0.94
+  substeps: 10
+  spin_strength: null
+  boundary_margin: 0.025
+  restitution_wall: -0.2
+  restitution_bound: -0.15
+env:
+  max_steps: 500
+  reward_mode: geodesic_exit
+  reward_progress_coef: 0.1
+  reward_success: 1.0
+  goal_track: big_cap
+  reward_geodesic_coef: 1.0
+  observe_linear_velocity: true
+  geodesic_field: storage_local/fields/pnas_gap015.npz
+  reward_dist_coef: 0.5
+curriculum:
+  enabled: false
+  mode: pose_path
+  success_threshold: 0.9
+  window: 100
+  max_steps_per_stage: null
+  stop_on_master: true
+  stop_success: 0.9
+  stop_window: 200
+  reverse_wall_len: 0.285
+  path_start_pose:
+  - 0.3
+  - 0.36
+  - 3.14159265
+  path_anchor_count: 16
+  near_goal_fraction: 0.05
+  xy_jitter: 0.0
+  angle_jitter: 0.0
+  start_stage: 0
+  stall_log_steps: 500000
+run:
+  wandb: true
+  render_freq: 500000
+  init_from: null
+  resume_model: storage_local/ant__20260821_1400__21056021__train_sac__gen_c_randboth/checkpoints/best/best_model.zip
+  resume_replay: null
+  transfer_actor_from: null
+  seed_successes_from: null
+  replay_checkpoint_freq: 500000
+  eval: false
+  eval_model: null
+  eval_episodes: 20
+  save_successes: true
+  dedup_successes: true
+  dedup_tol: 0.05
+ppo:
+  timesteps: 50000000
+  n_envs: 8
+  n_steps: 4096
+  batch_size: 512
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  learning_rate: 0.0003
+  ent_coef: 0.001
+  ent_coef_final: 0.0
+  use_sde: false
+  sde_sample_freq: -1
+  log_std_init: -1.0
+  log_std_min: -3.0
+  log_std_max: -0.5
+sac:
+  timesteps: 3000000
+  buffer_size: 1000000
+  batch_size: 256
+  learning_starts: 10000
+  gamma: 0.99
+  tau: 0.005
+  learning_rate: 0.0001
+  ent_coef: auto_0.05
+  target_entropy: -1.5
+  success_buffer_size: 200000
+  success_batch_fraction: 0.25
+  resume_warmup_steps: 50000
+goal_curriculum:
+  enabled: false

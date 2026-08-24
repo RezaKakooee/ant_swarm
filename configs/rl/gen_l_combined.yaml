@@ -1,0 +1,153 @@
+# Variant L — everything combined: HER + count intrinsic + gSDE noise.
+#
+# FEATURE SWITCHES (each independent; works in any config):
+#   env.reward_mode            sparse | shaped | geodesic | geodesic_exit
+#   env.geodesic_field(s)      field path(s); needed only by geodesic modes
+#   curriculum.enabled         pose-path/gap curriculum on/off
+#   curriculum.route           down (default) | up   (mirrored anchors)
+#   curriculum.mirror_anchors  practise both routes
+#   curriculum.final_spawn_x_range   free random spawns after mastery
+#   goal_curriculum.enabled    staged goal-set widening on/off
+#   spawn.resample_each_reset  random start each episode (fixed_pose: null!)
+#   spawn.fixed_pose           pin the start ([x, y, theta] or null)
+#   goal.random_box            continuous random goals ([[xmin,ymin],[xmax,ymax]] or null)
+#   goal.random_positions      random goals from a list (or null); box wins if both null->fixed goal.pos
+#   sac.success_replay         success replay buffer on/off
+#   sac.her.enabled            HER on/off (forces MultiInputPolicy + HerReplayBuffer;
+#                              excludes success_replay, resume_replay, seed_successes)
+#   sac.resume_warmup_steps    no gradient updates for N steps after a resume (0 = off)
+#   run.resume_model           exact resume (null = from scratch)
+#   env.intrinsic.enabled      exploration bonus on/off (TRAINING env only; SAC and PPO)
+#   env.intrinsic.mode         count (pose-grid pseudo-counts) | rnd (random network distillation)
+#   env.intrinsic.coef         bonus scale (default 0.01)
+#   env.intrinsic.cell_xy/cell_deg   count-mode grid size | env.intrinsic.embed_dim/lr   rnd-mode net
+scene_scale: 1.0
+world:
+  width: 1.65
+  height: 0.72
+walls:
+  x_columns:
+  - 0.758
+  - 0.979
+  length: 0.285
+  thickness: 0.01
+  render_extra: 0.2
+  height: 0.08
+tshape:
+  stem_len: 0.3315
+  cap_big_len: 0.1748
+  cap_small_len: 0.0874
+  thickness: 0.027
+  z: 0.02
+  height: 0.04
+goal:
+  pos:
+  - 1.2
+  - 0.36
+  reach_radius: 0.06
+  random_box:
+  - - 1.05
+    - 0.1
+  - - 1.55
+    - 0.62
+spawn:
+  x_range:
+  - 0.06
+  - 0.52
+  angle_range:
+  - -3.14159265
+  - 3.14159265
+  margin: 0.06
+  max_tries: 500
+  resample_each_reset: true
+ants:
+  n: 1
+  single_agent_spin: true
+  radius: 0.005
+  z: 0.04
+  mass: 0.001
+motion:
+  mode: dynamic
+  step_len: 0.01
+  rot_step: 0.1
+physics:
+  push_strength: 0.0005
+  object_mass: 0.5
+  object_inertia: 0.01
+  linear_friction: 0.96
+  angular_friction: 0.94
+  substeps: 10
+  spin_strength: null
+  boundary_margin: 0.025
+  restitution_wall: -0.2
+  restitution_bound: -0.15
+env:
+  max_steps: 500
+  reward_mode: sparse
+  reward_progress_coef: 0.1
+  reward_success: 1.0
+  goal_track: big_cap
+  reward_geodesic_coef: 1.0
+  observe_linear_velocity: true
+  intrinsic:
+    enabled: true
+    mode: count
+    coef: 0.01
+    cell_xy: 0.02
+    cell_deg: 30
+curriculum:
+  enabled: false
+run:
+  wandb: true
+  render_freq: 500000
+  init_from: null
+  resume_model: null
+  resume_replay: null
+  transfer_actor_from: null
+  seed_successes_from: null
+  replay_checkpoint_freq: 500000
+  eval: false
+  eval_model: null
+  eval_episodes: 20
+  save_successes: true
+  dedup_successes: true
+  dedup_tol: 0.05
+ppo:
+  timesteps: 50000000
+  n_envs: 8
+  n_steps: 4096
+  batch_size: 512
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  learning_rate: 0.0003
+  ent_coef: 0.001
+  ent_coef_final: 0.0
+  use_sde: false
+  sde_sample_freq: -1
+  log_std_init: -1.0
+  log_std_min: -3.0
+  log_std_max: -0.5
+sac:
+  timesteps: 10000000
+  buffer_size: 1000000
+  batch_size: 256
+  learning_starts: 10000
+  gamma: 0.99
+  tau: 0.005
+  learning_rate: 0.0003
+  ent_coef: auto_0.05
+  target_entropy: -1.5
+  success_buffer_size: 200000
+  success_batch_fraction: 0.25
+  resume_warmup_steps: 0
+  success_replay: false
+  her:
+    enabled: true
+    n_sampled_goal: 4
+    strategy: future
+  use_sde: true
+  sde_sample_freq: 64
+goal_curriculum:
+  enabled: false

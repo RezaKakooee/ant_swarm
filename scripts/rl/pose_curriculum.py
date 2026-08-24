@@ -63,6 +63,7 @@ class PosePathCurriculumCallback(BaseCallback):
                  xy_jitter: float = 0.0, angle_jitter: float = 0.0,
                  start_stage: int = 0, stop_on_master: bool = False,
                  stop_success: float = 0.9, stop_window: int = 200,
+                 final_spawn_x_range=None,
                  stall_log_steps: int | None = None, verbose: int = 1):
         super().__init__(verbose)
         anchors = np.asarray(anchors, dtype=np.float32)
@@ -76,6 +77,9 @@ class PosePathCurriculumCallback(BaseCallback):
             raise ValueError(f"start_stage must be in [0, {len(anchors) - 1}]")
 
         self.anchors = anchors
+        # optional mirrored variant of every anchor (symmetric maze): each
+        # episode randomly practises the up-turn or down-turn route
+        self.mirror_anchors = None
         self.threshold = float(success_threshold)
         self.window = int(window)
         self.reach_radius = float(reach_radius)
@@ -85,6 +89,12 @@ class PosePathCurriculumCallback(BaseCallback):
         self.stage_idx = int(start_stage)
         self.stop_on_master = bool(stop_on_master)
         self.stop_success = float(stop_success)
+        # After the last anchor is mastered, switch to fully random spawns and
+        # keep training (random-everything runs) instead of stopping.
+        self.final_spawn_x_range = (None if final_spawn_x_range is None
+                                    else (float(final_spawn_x_range[0]),
+                                          float(final_spawn_x_range[1])))
+        self._free_spawn = False
         self.success = deque(maxlen=self.window)
         self._target_success = deque(maxlen=int(stop_window))
         self._stage_start_step = 0
@@ -100,12 +110,18 @@ class PosePathCurriculumCallback(BaseCallback):
     def current_pose(self) -> np.ndarray:
         return self.anchors[self.stage_idx]
 
+    def _stage_poses(self, stage_idx: int):
+        pose = [self.anchors[stage_idx].tolist()]
+        if self.mirror_anchors is not None:
+            pose.append(self.mirror_anchors[stage_idx].tolist())
+        return pose
+
     def _set_pose(self, vec_env, stage_idx: int, *, exact: bool = False) -> None:
-        pose = self.anchors[stage_idx].tolist()
         xy_jitter = 0.0 if exact else self.xy_jitter
         angle_jitter = 0.0 if exact else self.angle_jitter
         vec_env.env_method(
-            "set_spawn_pose", pose, stage_idx, xy_jitter, angle_jitter)
+            "set_spawn_pose", self._stage_poses(stage_idx), stage_idx,
+            xy_jitter, angle_jitter)
 
     def prepare_env(self, vec_env, *, final: bool = False) -> None:
         """Pin layout and pose before SB3 performs its first reset."""
@@ -119,10 +135,10 @@ class PosePathCurriculumCallback(BaseCallback):
         if self.wall_len is not None:
             env.set_wall_length(self.wall_len)
         stage_idx = len(self.anchors) - 1 if final else self.stage_idx
-        pose = self.anchors[stage_idx].tolist()
         xy_jitter = 0.0 if final else self.xy_jitter
         angle_jitter = 0.0 if final else self.angle_jitter
-        env.set_spawn_pose(pose, stage_idx, xy_jitter, angle_jitter)
+        env.set_spawn_pose(self._stage_poses(stage_idx), stage_idx,
+                           xy_jitter, angle_jitter)
 
     def _reset_stall_clock(self) -> None:
         self._next_stall_log_step = (
@@ -184,16 +200,26 @@ class PosePathCurriculumCallback(BaseCallback):
                 and success_rate >= self.threshold):
             self._advance(success_rate)
 
-        if (self.stop_on_master and self.at_target
+        if (self.at_target and not self._free_spawn
                 and len(self._target_success) == self._target_success.maxlen):
             target_rate = sum(self._target_success) / len(self._target_success)
             if target_rate >= self.stop_success:
-                logger.info(
-                    f"[curriculum:pose_path] TARGET MASTERED: success "
-                    f"{target_rate:.2f} over {self._target_success.maxlen} episodes "
-                    f"-> stopping training (step {self.num_timesteps})."
-                )
-                return False
+                if self.final_spawn_x_range is not None:
+                    lo, hi = self.final_spawn_x_range
+                    self.training_env.env_method("set_spawn_x_range", lo, hi)
+                    self._free_spawn = True
+                    logger.info(
+                        f"[curriculum:pose_path] TARGET MASTERED (success "
+                        f"{target_rate:.2f}) -> FREE SPAWN: random start in "
+                        f"x=[{lo}, {hi}] (step {self.num_timesteps})."
+                    )
+                elif self.stop_on_master:
+                    logger.info(
+                        f"[curriculum:pose_path] TARGET MASTERED: success "
+                        f"{target_rate:.2f} over {self._target_success.maxlen} episodes "
+                        f"-> stopping training (step {self.num_timesteps})."
+                    )
+                    return False
 
         if (self._next_stall_log_step is not None
                 and self.num_timesteps >= self._next_stall_log_step):
@@ -212,6 +238,7 @@ class PosePathCurriculumCallback(BaseCallback):
         self.logger.record("curriculum/anchor_x", float(pose[0]))
         self.logger.record("curriculum/anchor_y", float(pose[1]))
         self.logger.record("curriculum/anchor_theta", float(pose[2]))
+        self.logger.record("curriculum/free_spawn", int(self._free_spawn))
         if self.success:
             self.logger.record("curriculum/success_rate", success_rate)
         return True
@@ -224,7 +251,8 @@ def build_pose_path_curriculum(cfg, cur, reach_radius: float) -> PosePathCurricu
     if field_path is None:
         raise ValueError("pose_path curriculum requires env.geodesic_field")
     field = PoseGeodesicField(field_path)
-    field.validate_config(cfg)
+    check_goal = str(getattr(cfg.env, "reward_mode", "")) != "geodesic_exit"
+    field.validate_config(cfg, check_goal=check_goal)
 
     start_pose = getattr(cur, "path_start_pose", None)
     if start_pose is None:
@@ -257,8 +285,30 @@ def build_pose_path_curriculum(cfg, cur, reach_radius: float) -> PosePathCurricu
         stop_on_master=bool(getattr(cur, "stop_on_master", False)),
         stop_success=float(getattr(cur, "stop_success", 0.9)),
         stop_window=int(getattr(cur, "stop_window", 200)),
+        final_spawn_x_range=getattr(cur, "final_spawn_x_range", None),
         stall_log_steps=getattr(cur, "stall_log_steps", None),
     )
+    if str(getattr(cur, "route", "down")) == "up":
+        # train ONLY the up-turn route: replace every anchor by its mirror
+        H = float(cfg.world.height) * float(cfg.scene_scale)
+        up = anchors.copy()
+        up[:, 1] = H - up[:, 1]
+        up[:, 2] = -up[:, 2]
+        _validate_anchors(cfg, float(wall_len), up)
+        callback.anchors = up
+        logger.info("[curriculum:pose_path] route=up: all anchors mirrored; "
+                    "the down-route path is never practised")
+    if bool(getattr(cur, "mirror_anchors", False)):
+        # y -> H - y, theta -> -theta: valid because walls, goal height and the
+        # T-shape are all symmetric about the maze's mid-height
+        H = float(cfg.world.height) * float(cfg.scene_scale)
+        mirrored = anchors.copy()
+        mirrored[:, 1] = H - mirrored[:, 1]
+        mirrored[:, 2] = -mirrored[:, 2]
+        _validate_anchors(cfg, float(wall_len), mirrored)
+        callback.mirror_anchors = mirrored
+        logger.info("[curriculum:pose_path] mirrored anchors ON: each episode "
+                    "randomly uses the up-turn or down-turn route")
     if getattr(cur, "max_steps_per_stage", None) is not None:
         logger.info("[curriculum:pose_path] max_steps_per_stage ignored; progression is mastery-only")
     return callback
