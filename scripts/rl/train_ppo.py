@@ -223,7 +223,7 @@ def train(cfg, s):
         import wandb
         wandb_run = wandb.init(
             project=WANDB_PROJECT, entity=WANDB_ENTITY, name=run_name,
-            dir=str(run_dir), group="ppo", tags=["ppo", "ant_swarm"],
+            group="ppo", tags=["ppo", "ant_swarm"],
             config=s, sync_tensorboard=True, save_code=False,
         )
         logger.info(f"W&B run   : {wandb_run.url}")

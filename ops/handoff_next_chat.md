@@ -1,4 +1,16 @@
-# Handoff — where we are (2026-08-20)
+# Handoff — where we are (2026-08-25)
+
+UPDATE 2026-08-25 — two chapters happened after the text below:
+1. **Generalisation SOLVED**: random start + random goal at 99-100% via the
+   two-leg reward (`geodesic_exit`) + continuous goals; from scratch in one
+   run; both routes possible (up needs `curriculum.route: up`).
+   Read: `docs/project_journey/01_goal_generalisation.md`.
+2. **Self-learning limit MEASURED**: sparse reward without a teacher fails —
+   HER / intrinsic / gSDE / Go-Explore all stall at frontier x=0.900.
+   Read: `docs/project_journey/02_self_learning_limit.md`.
+   Next candidate there: human demos from the interactive sandbox.
+Everything is a config switch now — master table in the header of
+`configs/rl/gen_h_her_sparse.yaml`. No jobs running.
 
 Short state file for the next chat. Longer history: `ops/handoff.md`.
 Plain-English summary of the method: `notes/what_made_it_work.md`.

@@ -36,6 +36,17 @@ def main():
     run_dir.mkdir(parents=True, exist_ok=True)
     setup_logging(run_dir)
 
+    wandb_run = None
+    if bool(getattr(g, "wandb", True)):
+        try:
+            import wandb
+            wandb_run = wandb.init(project="ant_swarm", entity="kakooee", name=run_dir.name,
+                                   group="go_explore",
+                                   tags=["go_explore"])
+            logger.info(f"W&B run: {wandb_run.url}")
+        except Exception as e:
+            logger.warning(f"wandb init failed — continuing without: {e}")
+
     env = AntSwarmEnv(config=cfg, seed=0)
     ge = GoExplore(
         env,
@@ -48,9 +59,21 @@ def main():
     total = int(float(getattr(g, "total_steps", 2_000_000)))
     logger.info(f"Go-Explore: {total} env steps, archive grid "
                 f"{ge.cell_xy} m x {math_deg(ge.cell_th)} deg")
-    stats = ge.run(total, log=logger.info)
+    def log(msg):
+        logger.info(msg)
+        if wandb_run is not None:
+            s = ge.stats()
+            wandb_run.log({"go_explore/steps": s["steps"],
+                           "go_explore/cells": s["cells"],
+                           "go_explore/successes": s["successes"],
+                           "go_explore/frontier_x": s["frontier_x"]})
+
+    stats = ge.run(total, log=log)
     n = ge.save_successes(run_dir / "successes")
     logger.info(f"Done: {stats}; {n} solutions saved to {run_dir/'successes'}")
+    if wandb_run is not None:
+        wandb_run.summary.update(stats)
+        wandb_run.finish()
 
 
 def math_deg(rad: float) -> float:

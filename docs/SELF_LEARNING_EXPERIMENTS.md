@@ -23,7 +23,7 @@ and a tiny solution space — no geodesic field, no pose-path curriculum?
 
 The full feature-switch table lives in the header of `configs/rl/gen_h_her_sparse.yaml`.
 
-## Experiments (running, launched 2026-08-24)
+## Experiments (launched 2026-08-24, all stopped 2026-08-25)
 
 | variant | job | method | budget |
 |---|---|---|---|
@@ -32,10 +32,35 @@ The full feature-switch table lives in the header of `configs/rl/gen_h_her_spars
 | J | 21281670 | Go-Explore phase 1, random actions | 3M steps / 6 h |
 | K | 21282433 | sparse + HER + structured noise (gSDE, `sac.use_sde`) | 10M steps / 3 days |
 | L | 21282577 | sparse + HER + intrinsic + gSDE (everything combined) | 10M steps / 3 days |
+| J2 | 21295462 | Go-Explore refined: cell_deg 10, bursts 100 | 5M steps / 6 h |
 
 Reading the ablation: I climbs but H does not → the bonus pushes the frontier
 through the first slit. Both climb → HER alone suffices. Neither climbs → we
 learned the honest limit; next step is J's solutions seeding a policy
 (`run.seed_successes_from`) or human demos from the sandbox.
 
-Results: pending.
+## Results so far (2026-08-25 morning)
+
+- **J (Go-Explore): finished. 0 solutions.** 3M steps, 5,362 cells; the
+  frontier reached x=0.900 (inside the corridor) in <700k steps and never
+  moved for the remaining 2.3M (log `ant__20260824_2303__21281670__*.out`).
+  Measurement: uniform random actions cannot make the turn-and-thread move
+  through the second slit, even restarting at the frontier. Candidate fixes
+  (untested): finer theta cells (30° may merge distinct poses at the turn),
+  longer/persistent action bursts, policy-guided exploration instead of
+  uniform random.
+- **H / I / L: stopped 2026-08-25 (~14h, 1.4-1.7M steps each).** 0% success
+  AND flat distance-to-goal for ~1M steps (H/I flat at 1.20, L at ~0.80).
+  Flat = no learning signal left; more steps would not help.
+- **K: stopped 2026-08-25 at 2.02M steps, 0% success.** The only arm that
+  approached the maze (distance ~0.65, gSDE noise), but flat for >1M steps.
+- **J2 (finer cells, 10 deg): stopped at 4.9M steps — frontier STILL 0.900**,
+  14,058 cells (2.6x J's archive), 0 solutions. The finer-grid hypothesis is
+  refuted.
+
+**Chapter verdict (measured three independent ways):** self-learning stops at
+x=0.900 — the second slit needs a precise pose+push sequence that random or
+noisy exploration never produces, so HER never gets a crossing to relabel.
+This task needs a teacher. Next candidate: ~10 human demos from the
+interactive sandbox seeding the success replay buffer (a teacher, but not a
+BFS one).

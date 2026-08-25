@@ -60,6 +60,9 @@ run_job() {
     if [ "${ANT_SWARM_FORCE_CPU:-0}" = "1" ]; then
         export CUDA_VISIBLE_DEVICES=""
     fi
+    # W&B: remote dashboard is the record; stage local files in job scratch
+    # (deleted automatically when the job ends) instead of storage_local
+    export WANDB_DIR="${TMPDIR:-/tmp}"
     export MUJOCO_GL=egl
     export PYTHONNOUSERSITE=1
 
