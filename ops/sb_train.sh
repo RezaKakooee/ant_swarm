@@ -66,8 +66,11 @@ run_job() {
     export MUJOCO_GL=egl
     export PYTHONNOUSERSITE=1
 
-    source "$HOME/miniconda3/etc/profile.d/conda.sh"
-    conda activate roboverse
+    # Conda location and env are configurable for other servers:
+    #   ANT_SWARM_CONDA_SH  (default: $HOME/miniconda3/etc/profile.d/conda.sh)
+    #   ANT_SWARM_CONDA_ENV (default: roboverse)
+    source "${ANT_SWARM_CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
+    conda activate "${ANT_SWARM_CONDA_ENV:-roboverse}"
 
     export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 

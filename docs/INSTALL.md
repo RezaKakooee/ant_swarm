@@ -70,6 +70,21 @@ Results land in `storage_local/<run_id>/` (checkpoints, renders, train.log).
 Open its HTML page directly; `gen_web_config.py` regenerates its geometry
 from the yaml config.
 
+## Moving to a new server
+
+The repo is path-portable: all code resolves paths relative to the repo root,
+and `storage_local/` (results, fields) is created where the repo lives.
+
+1. Clone the repo, do steps 1-3 above (the geodesic field must be rebuilt).
+2. No SLURM? Use `scripts/train.sh` — plain bash, uses `$PYTHON` or `python`.
+3. SLURM with different partitions? Edit the `#SBATCH` header of
+   `ops/sb_train.sh`, or override on the command line
+   (`sbatch --partition=... --qos=... ops/sb_train.sh ...`).
+4. Different conda setup? Set `ANT_SWARM_CONDA_SH` (path to conda.sh) and
+   `ANT_SWARM_CONDA_ENV` (env name) — used by all `ops/*.sh` scripts.
+5. Old checkpoints and configs reference `storage_local/...` relatively, so
+   copied run folders keep working if placed under the new repo root.
+
 ## Common problems
 
 | symptom | fix |

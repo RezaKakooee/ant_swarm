@@ -7,7 +7,7 @@ repo_root="$(cd "$script_dir/.." && pwd)"
 
 cd "$repo_root"
 eval "$(conda shell.bash hook)"
-conda activate roboverse
+conda activate "${ANT_SWARM_CONDA_ENV:-roboverse}"
 
 mkdir -p storage_local/sci_out
 
