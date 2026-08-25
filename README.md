@@ -20,6 +20,10 @@ gradient. Design reasoning lives in
 [notes/rl_design_notes.md](notes/rl_design_notes.md); the precise env spec in
 [docs/ENV_DEFINITION.md](docs/ENV_DEFINITION.md).
 
+## Install
+
+See [docs/INSTALL.md](docs/INSTALL.md) — conda env, verify, first run, common problems.
+
 ## Layout
 
 ```
