@@ -1,86 +1,71 @@
 # Handoff — where we are (2026-08-25)
 
-UPDATE 2026-08-25 — two chapters happened after the text below:
-1. **Generalisation SOLVED**: random start + random goal at 99-100% via the
-   two-leg reward (`geodesic_exit`) + continuous goals; from scratch in one
-   run; both routes possible (up needs `curriculum.route: up`).
-   Read: `docs/project_journey/01_goal_generalisation.md`.
-2. **Self-learning limit MEASURED**: sparse reward without a teacher fails —
-   HER / intrinsic / gSDE / Go-Explore all stall at frontier x=0.900.
-   Read: `docs/project_journey/02_self_learning_limit.md`.
-   Next candidate there: human demos from the interactive sandbox.
-Everything is a config switch now — master table in the header of
-`configs/rl/gen_h_her_sparse.yaml`. No jobs running.
+Short state file for the next chat.
+Full stories: `docs/project_journey/01_goal_generalisation.md` and
+`02_self_learning_limit.md`. Experiment tables:
+`docs/GENERALISATION_EXPERIMENTS.md`, `docs/SELF_LEARNING_EXPERIMENTS.md`.
 
-Short state file for the next chat. Longer history: `ops/handoff.md`.
-Plain-English summary of the method: `notes/what_made_it_work.md`.
+## Status in three lines
 
-## Status: single agent is DONE
+1. **Single agent, fixed task: solved** (100%, ants' maneuver verified by replay).
+2. **Random start + random goal: solved** (99-100%) — two-leg reward
+   (`geodesic_exit`) + continuous goals; from scratch in one run (variant E);
+   both routes possible (`curriculum.route: up` → variant G).
+3. **Self-learning without a teacher: fails, measured.** HER, intrinsic bonus,
+   gSDE, Go-Explore — every method stalls at frontier x=0.900 (second slit).
+   The task needs a teacher.
 
-The PNAS piano-movers task is solved in **dynamic** mode (real forces and
-momentum): **100% success, mastered at 247,519 steps**. Verified by replaying
-the last 25 solutions — **25/25 use the ants' maneuver** (big head into slit 1,
-turn in the corridor, small head out of slit 2). No shortcuts.
+## Everything is a config switch
 
-Best run (copied from the Azure box, kept here):
-`storage_local/ant__20260814_1230__local-1427853__train_sac__pnas_dyn_geo_v2__best`
+Master table in the header of `configs/rl/gen_h_her_sparse.yaml`. Highlights:
+reward (`env.reward_mode`: sparse/shaped/geodesic/geodesic_exit), curriculum
+(`curriculum.enabled`, `route`, `mirror_anchors`, `final_spawn_x_range`),
+random start (`spawn.resample_each_reset`), random goal (`goal.random_box`),
+HER (`sac.her.enabled`), intrinsic (`env.intrinsic`), gSDE (`sac.use_sde`),
+success replay (`sac.success_replay`), resume warm-up
+(`sac.resume_warmup_steps`), Go-Explore (`go_explore:` + `run_go_explore.py`).
 
-What made it work (all in git): pose-path curriculum from a BFS solution,
-success replay buffer (25% of each batch), linear velocity in the observation
-(25 → 27 numbers), geodesic reward (BFS route distance).
+## Key checkpoints (each under `<run>/checkpoints/best/`)
 
-## Two repos now
+| what | run dir in `storage_local/` |
+|---|---|
+| E — random everything, from scratch, down-route | `ant__20260822_1754__21107972__*gen_e_scratch_randall` |
+| G — same but up-route | `ant__20260824_1124__21243500__*gen_g_uponly` |
+| F — mirror curriculum, 100% benchmark | `ant__20260823_1120__21144812__*gen_f_mirror` |
+| single-goal source run | `ant__20260814_1230__local-1427853__*pnas_dyn_geo_v2__best` |
 
-| repo | where | what |
-|---|---|---|
-| `ant_swarm` (private) | `~/ant_swarm` | working repo — everything, incl. `ops/` (SLURM), `blogs/`, `docs/`, `notes/` |
-| `ant-piano-movers-rl` (public) | `~/ant-piano-movers-rl` | code only: `ant_swarm/`, `configs/`, `scripts/`, `interactive/`, README, CITATION.cff, LICENSE |
+## Cluster habits
 
-Publish flow (never push the private repo's history — it contains cluster paths
-and personal notes):
+- CPU beats GPU here (pure-NumPy env, tiny MLP): `--partition=scicore
+  --qos=1day` (or `1week`), `--gres=NONE`, `ANT_SWARM_FORCE_CPU=1`,
+  ~40-56 fps. `scicore-fast`/`fast` caps at 6h ≈ 1.2M steps.
+- Launch: `sbatch ops/sb_train.sh train_sac configs/rl/<cfg>.yaml`.
+- W&B: remote dashboard is the record; local files go to job scratch.
 
-```bash
-cd ~/ant_swarm && python tools/publish.py      # allowlist export + scrubber
-cp -r storage_local/public_export/. ~/ant-piano-movers-rl/
-cd ~/ant-piano-movers-rl && git add -A && git commit -m "..." && git push
-```
+## Next steps (in rough order)
 
-`tools/publish.py` REFUSES to export if anything mentions the cluster name,
-usernames, `sbatch`/`squeue` or `/home/…`. Edit `ALLOW` there to change what
-goes public. `blogs/`, `docs/`, `notes/`, `ops/` are deliberately NOT public.
-
-## Blog
-
-`blogs/01-can-ai-solve-the-ant-puzzle/`
-- `POST.md` — the write-up (the one that matters)
-- `ant-piano-movers-rl/` — static project page, copied into the site repo
-  (`RezaKakooee/rezakakooee.github.io`), live at
-  `rezakakooee.github.io/ant-piano-movers-rl/` with the sandbox at `/sandbox/`
-- `make_figures.py` — regenerates every figure from the real env + BFS field
-- older drafts (`BLOG_POST*.md`, `POST_REFINED.md`, `REPORT.md`) are superseded
-
-## Next: multi-agent
-
-`ants.n >= 2`, dynamic mode. First a central controller (the SB3 setup already
-supports it), then parameter-shared decentralized policies where each ant sees
-only its own observation row. The per-ant observation layout is already built
-for this.
-
-Known open ends:
-- our slit is a bit wider than the paper's (0.86 of the big head vs 0.81), so a
-  small-head route still exists geometrically; the curriculum, not the geometry,
-  is what removed it
-- the BFS teacher is a strong help — worth testing how far a weaker one gets
-- PPO was never run with the teacher setup, only SAC
+1. **Human demos**: record ~10 plays in `interactive/` sandbox, convert to
+   success JSONs, seed via `run.seed_successes_from` (needs
+   `sac.success_replay: true`, HER off), sparse SAC. Tests "human teacher,
+   no BFS". No converter sandbox→JSON exists yet — must be written.
+2. **Multi-agent** (`ants.n >= 2`, dynamic): the real goal. Central controller
+   first; per-ant observation layout is already built.
+3. Optional: fold chapters 01+02 into the blog; publish the toolkit to the
+   public repo (`python tools/publish.py`, then manual push — blogs/docs/ops
+   stay private).
 
 ## Traps already paid for (do not relearn)
 
-1. Straight-line distance shaping is DECEPTIVE here: it rewards pushing into the
-   wall and punishes the turn. Use `reward_mode: geodesic`.
-2. Never widen the slit to make it easier — that is a different task with a
-   different solution (negative transfer). Move the START pose instead.
-3. Check WHAT the agent does, not just its success rate. Two "successes" were
-   cheats, caught only by replaying trajectories.
-4. The geodesic field needs `--inflate 0.002 --dx 0.003 --dth 2`; the default
-   coarse grid silently disconnects (look for "reachable 100%" in the output).
-5. Regenerate the field after any geometry change; it is not in git.
+1. Distance shaping is deceptive here; per-goal geodesic fields do NOT
+   generalise (0% on unseen goals). Use `geodesic_exit` + continuous goals.
+2. SB3 resume starts with an EMPTY buffer and the saved LR — always use
+   `sac.resume_warmup_steps` (50k) and check the LR log line.
+3. HER needs `learning_starts` > `env.max_steps` (500).
+4. Judge runs by per-condition metrics (per-goal, frontier_x), never by saved
+   videos (biased sample) or a mixed rolling average.
+5. The BFS grid has a tiny down-route bias (asymmetric discretisation); it
+   decides ties but cannot overturn a learned skill.
+6. `pkill -f <pattern>` kills your own shell if the pattern is in the command
+   line. Analysis scripts live in `storage_local/analysis/`, not /tmp.
+7. Old runs held 400k+ small files; big cleanup was running 2026-08-25 —
+   check `du -sh storage_local` before assuming space.
