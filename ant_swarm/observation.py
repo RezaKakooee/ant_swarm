@@ -18,6 +18,8 @@ The barrier block gives the policy a direct "how close is each arm to clipping
 a wall corner" signal — the cue needed to learn to rotate near the gap.
 
 Dynamic observations are 27-dimensional.  Set
+``env.velocity_scale_ants: 1`` to normalise linear velocity by a fixed ant
+count rather than the live ``ants.n`` (see the note in ``__init__``).  Set
 ``env.observe_linear_velocity: false`` to retain the legacy 25-dimensional
 layout (for example, when loading an old checkpoint).  Kinematic mode also
 uses the 25-dimensional layout because it deliberately has no momentum.
@@ -32,6 +34,7 @@ from ._gym import spaces
 
 N_BASE = 9
 N_LINEAR_VELOCITY = 2
+N_CONTACT_VELOCITY = 2
 N_TIPS = 4
 N_HEADS = 4
 N_BARRIER = N_TIPS * N_HEADS
@@ -43,7 +46,7 @@ class ObservationModel:
     def __init__(self, cfg, layout, tshape):
         self.n_ants = int(cfg.ants.n)
         self.world_size = layout.world_size
-        self.goal = layout.goal
+        self.layout = layout
         self.stem_half = tshape.stem_len / 2
         self.cap_half = max(tshape.cap_big_len, tshape.cap_small_len) / 2
 
@@ -59,6 +62,16 @@ class ObservationModel:
         self.observe_linear_velocity = (
             self.motion_mode == "dynamic" and requested_velocity)
         self.obs_dim = DYNAMIC_OBS_DIM if self.observe_linear_velocity else OBS_DIM
+        # env.observe_contact_velocity: append the load's velocity AT THIS ANT'S
+        # attachment point, v_c = v_centre + omega x arm, in the same units as the
+        # linear-velocity block. This is the channel decentralised transport
+        # coordinates through in the literature (Wang & Schwager; the ant model):
+        # each carrier reads the load's local motion at its own contact and needs
+        # neither the team size nor the others' positions. Default off (27-D).
+        self.observe_contact_velocity = (self.observe_linear_velocity and
+                                         bool(getattr(cfg.env, "observe_contact_velocity", False)))
+        if self.observe_contact_velocity:
+            self.obs_dim += N_CONTACT_VELOCITY
 
         # Normalise by the theoretical steady-state speed under aligned,
         # full-strength pushes: (total force / mass) / (1 - friction).
@@ -66,7 +79,17 @@ class ObservationModel:
         if self.observe_linear_velocity:
             ph = cfg.physics
             scene_scale = float(cfg.scene_scale)
-            total_force = abs(float(ph.push_strength)) * scene_scale * self.n_ants
+            # env.velocity_scale_ants: normalise by a FIXED ant count instead of
+            # the live n_ants. With the live count the scale grows with N, so a
+            # policy trained at one ant count reads velocities at the wrong
+            # size at another (measured: undoing the factor took a transferred
+            # policy from 0% to 90%). A fixed count (e.g. 1) keeps the n=1
+            # observation identical and makes the channel absolute.
+            # Default None = legacy live-count behaviour.
+            scale_ants = getattr(cfg.env, "velocity_scale_ants", None)
+            self.velocity_scale_ants = int(scale_ants) if scale_ants else self.n_ants
+            total_force = (abs(float(ph.push_strength)) * scene_scale
+                           * self.velocity_scale_ants)
             mass = max(abs(float(ph.object_mass)), 1e-8)
             damping = max(1.0 - min(abs(float(ph.linear_friction)), 0.999), 1e-3)
             self.linear_velocity_scale = max(total_force / mass / damping, 1e-8)
@@ -77,6 +100,15 @@ class ObservationModel:
             [-sb,  cb], [-sb, -cb],   # big-cap top / bottom
             [ sb,  cs], [ sb, -cs],   # small-cap top / bottom
         ], dtype=np.float32)
+
+    @property
+    def goal(self) -> np.ndarray:
+        """Use the same live goal as distance, reward, and rendering."""
+        return self.layout.goal
+
+    @goal.setter
+    def goal(self, value) -> None:
+        self.layout.goal = value
 
     def space(self) -> spaces.Box:
         return spaces.Box(
@@ -117,5 +149,12 @@ class ObservationModel:
                 obs[i, N_BASE:N_BASE + N_LINEAR_VELOCITY] = np.clip(
                     obj.vel / self.linear_velocity_scale, -1.0, 1.0)
                 barrier_start += N_LINEAR_VELOCITY
-            obs[i, barrier_start:] = barrier
+            if self.observe_contact_velocity:
+                arm = obj.rot() @ np.asarray(att, dtype=np.float32)
+                v_c = obj.vel + float(obj.ang_vel) * np.array([-arm[1], arm[0]], dtype=np.float32)
+                obs[i, barrier_start:barrier_start + N_CONTACT_VELOCITY] = np.clip(
+                    v_c / self.linear_velocity_scale, -1.0, 1.0)
+                obs[i, barrier_start + N_CONTACT_VELOCITY:] = barrier
+            else:
+                obs[i, barrier_start:] = barrier
         return obs

@@ -197,7 +197,31 @@ def _json_paths(source: str | Path) -> list[Path]:
     return sorted(source.parent.glob(source.name))
 
 
-def _load_trajectories(path: Path) -> list[dict[str, Any]]:
+def _load_trajectories(path: Path, max_trajectories: int | None = None) -> list[dict[str, Any]]:
+    if path.suffix == ".npz":
+        z = np.load(path)
+        offsets = z["offsets"]
+        actions_flat = z["actions"]
+        init_poses = z["init_pose"]
+        goals = z["goal"] if "goal" in z else None
+        wall_len = float(z["wall_len"]) if "wall_len" in z else None
+        
+        trajectories = []
+        n_eps = len(offsets) - 1
+        if max_trajectories is not None:
+            n_eps = min(n_eps, max_trajectories)
+        for i in range(n_eps):
+            item = {
+                "actions": actions_flat[offsets[i]:offsets[i+1]],
+                "init_pose": init_poses[i],
+            }
+            if goals is not None:
+                item["goal"] = goals[i]
+            if wall_len is not None:
+                item["wall_len"] = wall_len
+            trajectories.append(item)
+        return trajectories
+
     with path.open() as handle:
         payload = json.load(handle)
     if isinstance(payload, list):
@@ -233,8 +257,11 @@ def seed_success_trajectories(
     target_wall_len = float(env.layout.wall_len)
 
     for path in paths:
+        remaining = None if max_trajectories is None else (max_trajectories - stats["loaded"])
+        if remaining is not None and remaining <= 0:
+            break
         try:
-            trajectories = _load_trajectories(path)
+            trajectories = _load_trajectories(path, max_trajectories=remaining)
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             stats["skipped"] += 1
             continue
@@ -245,7 +272,8 @@ def seed_success_trajectories(
                 return stats
             actions = trajectory.get("actions")
             init_pose = trajectory.get("init_pose")
-            if not actions or not isinstance(init_pose, (list, tuple)) or len(init_pose) != 3:
+            goal = trajectory.get("goal")
+            if actions is None or len(actions) == 0 or init_pose is None or len(init_pose) != 3:
                 stats["skipped"] += 1
                 continue
 
@@ -263,6 +291,8 @@ def seed_success_trajectories(
                     continue
 
             env.reset()
+            if goal is not None and len(goal) == 2:
+                env.layout.goal = np.asarray(goal, dtype=np.float32)
             center = np.asarray(init_pose[:2], dtype=np.float32)
             angle = float(init_pose[2])
             env.state.reset(center, angle)

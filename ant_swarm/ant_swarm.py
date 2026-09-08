@@ -46,6 +46,13 @@ class AntSwarmEnv(gym.Env):
         self.reward_model = RewardModel(self.cfg)
 
         self.n_ants = int(self.cfg.ants.n)
+        # ants.offsets (config): explicit attachment points in the T's local frame,
+        # used when the constructor is not given ant_offsets. Default None keeps the
+        # rule in make_attachment_offsets (centre / stem ends / random perimeter).
+        if ant_offsets is None:
+            ant_offsets = getattr(self.cfg.ants, "offsets", None)
+        if ant_offsets is not None and len(ant_offsets) != self.n_ants:
+            raise ValueError(f"ants.offsets has {len(ant_offsets)} points but ants.n={self.n_ants}")
         self.ant_radius = self.cfg.ants.radius * float(self.cfg.scene_scale)
         self.attachment_offsets = make_attachment_offsets(
             self.tshape, self.n_ants, self.rng, ant_offsets)
@@ -183,20 +190,36 @@ class AntSwarmEnv(gym.Env):
     # Gym interface
     # ------------------------------------------------------------------
     def reset(self, seed=None, options=None):
+        """Reset, optionally to an exact ``init_pose`` and ``goal`` in world units.
+
+        Explicit options bypass the corresponding random sampler, making demo
+        replay and evaluation independent of previous episodes.
+        """
         super().reset(seed=seed)
         if seed is not None:
             self.rng = np.random.default_rng(seed)
         self._apply_pending()
-        goal = None
-        if self._goal_choices is not None:             # random goal from a list
+        options = {} if options is None else options
+        goal = options.get("goal")
+        if goal is not None:
+            goal = np.asarray(goal, dtype=np.float32)
+        elif self._goal_choices is not None:             # random goal from a list
             goal = self._goal_choices[self.rng.integers(len(self._goal_choices))]
         elif self._goal_box is not None:               # continuous random goal
             goal = self.rng.uniform(self._goal_box[0], self._goal_box[1]) \
                        .astype(np.float32)
         if goal is not None:
-            self.layout.goal[:] = goal                 # obs model holds this array by reference
+            self.layout.goal = goal
             self.reward_model.set_goal(goal)
-        if self._resample_each_reset:                  # fresh start each episode
+        pose = options.get("init_pose")
+        if pose is not None:
+            pose = np.asarray(pose, dtype=np.float32)
+            if pose.shape != (3,) or not np.isfinite(pose).all():
+                raise ValueError("init_pose must be a finite (x, y, angle) triple")
+            if not self._pose_is_free(pose[:2], float(pose[2])):
+                raise ValueError("init_pose overlaps a wall or world boundary")
+            self.init_center, self.init_angle = pose[:2].copy(), float(pose[2])
+        elif self._resample_each_reset:                  # fresh start each episode
             self.init_center, self.init_angle = self._sample_spawn()
         self._episode_curriculum_stage = self._curriculum_stage
         self.state.reset(self.init_center, self.init_angle)

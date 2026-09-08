@@ -1,0 +1,126 @@
+# Arm 2 — full-policy fine-tuning. An ordinary SAC actor, initialised by
+# distilling the BC policy into it, then anchored by a KL-like penalty.
+# Method 1: Perturbation-Augmented Imitation Learning (Augmented BC)
+# Injects state perturbations and applies closed-loop corrective steering
+# to eliminate compounding error without curriculum.
+
+scene_scale: 1.0
+world:
+  width: 1.65
+  height: 0.72
+walls:
+  x_columns:
+  - 0.758
+  - 0.979
+  length: 0.285
+  thickness: 0.01
+  render_extra: 0.2
+  height: 0.08
+tshape:
+  stem_len: 0.3315
+  cap_big_len: 0.1748
+  cap_small_len: 0.0874
+  thickness: 0.027
+  z: 0.02
+  height: 0.04
+goal:
+  pos:
+  - 1.2
+  - 0.36
+  reach_radius: 0.06
+  random_box:
+  - - 1.05
+    - 0.1
+  - - 1.55
+    - 0.62
+spawn:
+  x_range:
+  - 0.06
+  - 0.52
+  angle_range:
+  - -3.14159265
+  - 3.14159265
+  margin: 0.06
+  max_tries: 500
+  resample_each_reset: true
+ants:
+  n: 1
+  single_agent_spin: true
+  radius: 0.005
+  z: 0.04
+  mass: 0.001
+motion:
+  mode: dynamic
+  step_len: 0.01
+  rot_step: 0.1
+physics:
+  push_strength: 0.0005
+  object_mass: 0.5
+  object_inertia: 0.01
+  linear_friction: 0.96
+  angular_friction: 0.94
+  substeps: 10
+  spin_strength: null
+  boundary_margin: 0.025
+  restitution_wall: -0.2
+  restitution_bound: -0.15
+env:
+  max_steps: 500
+  reward_mode: sparse
+  reward_progress_coef: 0.1
+  reward_success: 1.0
+  goal_track: big_cap
+  observe_linear_velocity: true
+  geodesic_field: storage_local/fields/pnas_gap015.npz
+
+# ---------------------------------------------------------------------------
+# RL fine-tuning of a corrected-goal BC checkpoint.
+# Every switch lives here. scripts/rl/bc_finetune.py branches on  only.
+# ---------------------------------------------------------------------------
+finetune:
+  mode: gaussian                 # residual | gaussian
+  bc_checkpoint: storage_local/ant__20260905_1322__240805__train_goal_bc/bc_goal_fixed.pt
+  timesteps: 400000
+
+  # anchor to the frozen BC policy: MSE(pi_mean, pi_bc) on replay states.
+  # For a fixed-variance Gaussian this is the KL up to a constant, so
+  # anchor_coef behaves like a KL weight. Annealed during training.
+  anchor_coef: 2.0
+  anchor_final: 2.0
+  anchor_anneal_steps: 200000
+
+  # the critic is random at step 0 under sparse reward; letting the actor
+  # follow it immediately cost 94% -> 64% in the first run
+  critic_warmup_steps: 50000
+
+  # evaluate during training and keep the best policy, so fine-tuning
+  # can never return something worse than it started with
+  eval_every: 20000
+  eval_episodes: 30
+
+  # residual mode only: |correction| bound in normalised action units.
+  # 0 reproduces the BC policy exactly.
+  residual_scale: 0.0
+
+  # gaussian mode only: start by fitting the SAC actor to the BC policy
+  distill_init: true
+  distill_cache: storage_local/cache/replay_full_goals_v2.npz
+  distill_samples: 500000
+  distill_steps: 20000
+
+  net_arch: [256, 256, 256]
+  learning_rate: 0.00003
+  buffer_size: 300000
+  learning_starts: 5000
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 1
+  ent_coef: 0.002              # low: the 15 mm slit punishes random actions
+  seed: 20260905
+
+  # cpu | cuda | auto. Default cpu: the env is single-threaded NumPy,
+  # so RL is env-bound and a GPU buys little. 'cuda' fails loudly if the
+  # node's driver is too old -- submit with -w calc-g-002 or calc-g-003.
+  device: cpu

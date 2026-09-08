@@ -48,6 +48,21 @@ class Layout:
         self.world_diag = float(np.hypot(W, H))
 
     @property
+    def goal(self) -> np.ndarray:
+        return self._goal
+
+    @goal.setter
+    def goal(self, value) -> None:
+        # Own the storage: a random reset must not overwrite a dataset row.
+        goal = np.asarray(value, dtype=np.float32)
+        if goal.shape != (2,) or not np.isfinite(goal).all():
+            raise ValueError("goal must be a finite (x, y) pair")
+        if hasattr(self, "_goal"):
+            self._goal[:] = goal
+        else:
+            self._goal = goal.copy()
+
+    @property
     def gap(self) -> float:
         """Vertical opening between the upper and lower wall segments."""
         return self.world_size[1] - 2 * self.wall_len

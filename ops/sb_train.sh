@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name=ant
-#SBATCH --qos=rtx4090-1day
+#SBATCH --qos=normal
 #SBATCH --time=1-00:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --partition=rtx4090
+#SBATCH --partition=performance
 #SBATCH --gres=gpu:1
 #SBATCH --output=/dev/null
 #SBATCH --error=/dev/null
@@ -66,16 +66,25 @@ run_job() {
     export MUJOCO_GL=egl
     export PYTHONNOUSERSITE=1
 
-    # Conda location and env are configurable for other servers:
-    #   ANT_SWARM_CONDA_SH  (default: $HOME/miniconda3/etc/profile.d/conda.sh)
-    #   ANT_SWARM_CONDA_ENV (default: roboverse)
-    source "${ANT_SWARM_CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
-    conda activate "${ANT_SWARM_CONDA_ENV:-roboverse}"
-
+    CONDA_SH="${ANT_SWARM_CONDA_SH:-}"
+    if [ -z "$CONDA_SH" ]; then
+        for p in "$HOME/miniconda3/etc/profile.d/conda.sh" "/home2/reza/miniconda3/etc/profile.d/conda.sh" "/opt/conda/etc/profile.d/conda.sh"; do
+            if [ -f "$p" ]; then CONDA_SH="$p"; break; fi
+        done
+    fi
+    if [ -n "$CONDA_SH" ] && [ -f "$CONDA_SH" ]; then
+        source "$CONDA_SH"
+        conda activate "${ANT_SWARM_CONDA_ENV:-antswarm}" 2>/dev/null || true
+    fi
+    export PATH="/home2/reza/.conda/envs/antswarm/bin:$PATH"
     export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 
     echo "Python : $(which python3)"
-    echo "GPU    : $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader)"
+    if command -v nvidia-smi &>/dev/null; then
+        echo "GPU    : $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || echo 'none')"
+    else
+        echo "GPU    : none"
+    fi
     echo ""
 
     python3 -u "$PROJECT_ROOT/$PY_SCRIPT".py "${EXTRA_ARGS[@]}"

@@ -1,33 +1,19 @@
 #!/usr/bin/env bash
 
 if [ "${1:-}" = "--once" ]; then
-    {
-        for pid in $(ps -u "$USER" -o pid=); do
-            job_name="$({ tr '\0' '\n' < "/proc/$pid/environ"; } 2>/dev/null |
-                sed -nE 's/^(ANT_SWARM_RUN_ID|RADIAL_SPHERE_RUN_ID)=//p' | head -1)"
-            if [ -n "$job_name" ]; then
-                stats="$(ps -p "$pid" -o pid=,etimes=,%cpu=,%mem=,stat= 2>/dev/null)"
-                [ -n "$stats" ] && echo "$job_name $stats"
-            fi
-        done
-    } | awk '
-        function elapsed(s) {
-            d=int(s/86400); s%=86400; h=int(s/3600); s%=3600; m=int(s/60); s%=60
-            return (d ? d "-" : "") sprintf("%02d:%02d:%02d", h, m, s)
-        }
-        {
-            name=$1; pid=$2; sec=$3; cpu=$4; mem=$5; state=$6
-            if (!(name in first_pid) || pid < first_pid[name]) first_pid[name]=pid
-            if (sec > max_sec[name]) max_sec[name]=sec
-            total_cpu[name]+=cpu; total_mem[name]+=mem
-            if (!(name in job_state) || state ~ /^R/) job_state[name]=state
-        }
-        END {
-            printf "%-8s %-12s %7s %7s %-5s %s\n", "PID", "ELAPSED", "CPU%", "MEM%", "STATE", "JOB_NAME"
-            for (name in first_pid)
-                printf "%-8s %-12s %7.1f %7.1f %-5s %s\n", first_pid[name], elapsed(max_sec[name]), total_cpu[name], total_mem[name], job_state[name], name
-        }'
-    exit
+    printf "%-8s %-10s %7s %7s %-6s %s\n" "PID" "ELAPSED" "CPU%" "MEM%" "STATE" "COMMAND / CONFIG"
+    echo "--------------------------------------------------------------------------------"
+    ps -u "$USER" -o pid,etimes,%cpu,%mem,stat,args | grep -E "python3.*(train_|evaluate|il_|sac_|generate_|scripts/)" | grep -v grep | while read -r pid etimes cpu mem stat args; do
+        d=$((etimes / 86400)); s=$((etimes % 86400)); h=$((s / 3600)); s=$((s % 3600)); m=$((s / 60)); sec=$((s % 60))
+        if [ $d -gt 0 ]; then
+            el=$(printf "%d-%02d:%02d:%02d" $d $h $m $sec)
+        else
+            el=$(printf "%02d:%02d:%02d" $h $m $sec)
+        fi
+        cmd=$(echo "$args" | sed -E 's|.*/python3 -u? ||' | sed -E 's|.*/python3 ||')
+        printf "%-8s %-10s %7.1f %7.1f %-6s %s\n" "$pid" "$el" "$cpu" "$mem" "$stat" "$cmd"
+    done
+    exit 0
 fi
 
-watch -n "${1:-2}" "'$0' --once"
+watch -n "${1:-2}" "$0 --once"

@@ -1,0 +1,105 @@
+# Variant M: Demonstration-seeded SAC (SACfD)
+# Random start + random goal, NO curriculum, seeded from dataset.npz.
+
+scene_scale: 1.0
+world:
+  width: 1.65
+  height: 0.72
+walls:
+  x_columns:
+  - 0.758
+  - 0.979
+  length: 0.285
+  thickness: 0.01
+  render_extra: 0.2
+  height: 0.08
+tshape:
+  stem_len: 0.3315
+  cap_big_len: 0.1748
+  cap_small_len: 0.0874
+  thickness: 0.027
+  z: 0.02
+  height: 0.04
+goal:
+  pos:
+  - 1.2
+  - 0.36
+  reach_radius: 0.06
+  random_box:
+  - - 1.05
+    - 0.1
+  - - 1.55
+    - 0.62
+spawn:
+  x_range:
+  - 0.06
+  - 0.52
+  angle_range:
+  - -3.14159265
+  - 3.14159265
+  margin: 0.06
+  max_tries: 500
+  resample_each_reset: true
+ants:
+  n: 1
+  single_agent_spin: true
+  radius: 0.005
+  z: 0.04
+  mass: 0.001
+motion:
+  mode: dynamic
+  step_len: 0.01
+  rot_step: 0.1
+physics:
+  push_strength: 0.0005
+  object_mass: 0.5
+  object_inertia: 0.01
+  linear_friction: 0.96
+  angular_friction: 0.94
+  substeps: 10
+  spin_strength: null
+  boundary_margin: 0.025
+  restitution_wall: -0.2
+  restitution_bound: -0.15
+env:
+  max_steps: 500
+  reward_mode: geodesic_exit
+  reward_progress_coef: 0.1
+  reward_success: 1.0
+  goal_track: big_cap
+  reward_geodesic_coef: 1.0
+  observe_linear_velocity: true
+  geodesic_field: storage_local/fields/pnas_gap015.npz
+  reward_dist_coef: 0.5
+curriculum:
+  enabled: false
+run:
+  wandb: false
+  render_freq: 200000
+  init_from: null
+  resume_model: null
+  resume_replay: null
+  transfer_actor_from: null
+  seed_successes_from: storage_local/datasets/successes_v1/dataset.npz
+  seed_successes_limit: 300
+  replay_checkpoint_freq: 500000
+  eval: false
+  eval_model: null
+  eval_episodes: 20
+  save_successes: true
+  dedup_successes: true
+  dedup_tol: 0.05
+sac:
+  timesteps: 500000
+  buffer_size: 500000
+  batch_size: 256
+  learning_starts: 0
+  gamma: 0.99
+  tau: 0.005
+  learning_rate: 0.0001
+  ent_coef: 0.005
+  target_entropy: -3.0
+  success_replay: true
+  success_buffer_size: 100000
+  success_batch_fraction: 0.25
+  resume_warmup_steps: 0

@@ -1,0 +1,113 @@
+# Method 1: Perturbation-Augmented Imitation Learning (Augmented BC)
+# Injects state perturbations and applies closed-loop corrective steering
+# to eliminate compounding error without curriculum.
+
+scene_scale: 1.0
+world:
+  width: 1.65
+  height: 0.72
+walls:
+  x_columns:
+  - 0.758
+  - 0.979
+  length: 0.285
+  thickness: 0.01
+  render_extra: 0.2
+  height: 0.08
+tshape:
+  stem_len: 0.3315
+  cap_big_len: 0.1748
+  cap_small_len: 0.0874
+  thickness: 0.027
+  z: 0.02
+  height: 0.04
+goal:
+  pos:
+  - 1.2
+  - 0.36
+  reach_radius: 0.06
+  random_box:
+  - - 1.05
+    - 0.1
+  - - 1.55
+    - 0.62
+spawn:
+  x_range:
+  - 0.06
+  - 0.52
+  angle_range:
+  - -3.14159265
+  - 3.14159265
+  margin: 0.06
+  max_tries: 500
+  resample_each_reset: true
+ants:
+  n: 5
+  single_agent_spin: false
+  # attachment points, T local frame (metres). Stem along x, origin at its centre;
+  # big cap at x=-0.166 (spans y +-0.087), small cap at x=+0.166 (spans y +-0.044).
+  offsets:
+  - [-0.16575,  0.055]   # big cap, upper
+  - [-0.16575, -0.055]   # big cap, lower
+  - [ 0.16575,  0.028]   # small cap, upper
+  - [ 0.16575, -0.028]   # small cap, lower
+  - [ 0.0,      0.0  ]   # centre of the stem: pushes only, no torque
+  radius: 0.005
+  z: 0.04
+  mass: 0.001
+motion:
+  mode: dynamic
+  step_len: 0.01
+  rot_step: 0.1
+physics:
+  push_strength: 0.0005
+  object_mass: 0.5
+  object_inertia: 0.01
+  linear_friction: 0.96
+  angular_friction: 0.94
+  substeps: 10
+  spin_strength: null
+  boundary_margin: 0.025
+  restitution_wall: -0.2
+  restitution_bound: -0.15
+env:
+  max_steps: 500
+  reward_mode: geodesic_exit
+  reward_geodesic_coef: 1.0
+  reward_dist_coef: 0.5
+  reward_progress_coef: 0.1
+  reward_success: 1.0
+  goal_track: big_cap
+  observe_linear_velocity: true
+  geodesic_field: storage_local/fields/pnas_gap015.npz
+
+# The chapter-01 recipe that solved n=1 from scratch -- two-leg geodesic reward
+# AND the 16-anchor pose_path curriculum -- applied to 5 decentralised ants. The geodesic field shapes the reward during
+# training only; the policy never sees it. Multi-agent coordination is the
+# thing being learned here, not the route.
+curriculum:
+  enabled: true
+  mode: pose_path
+  success_threshold: 0.9
+  window: 100
+  max_steps_per_stage: null
+  stop_on_master: false
+  stop_success: 0.9
+  stop_window: 200
+  reverse_wall_len: 0.285
+  path_start_pose:
+  - 0.3
+  - 0.36
+  - 3.14159265
+  path_anchor_count: 16
+  near_goal_fraction: 0.05
+  xy_jitter: 0.0
+  angle_jitter: 0.0
+  start_stage: 0
+  stall_log_steps: 500000
+  final_spawn_x_range:
+  - 0.06
+  - 0.52
+
+marl:
+  note: geodesic_exit reward + pose_path curriculum (chapter-01 recipe), 5 ants spread

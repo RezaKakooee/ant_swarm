@@ -1,1 +1,1 @@
-watch -n 5 squeue -u $USER
+watch -n 5 squeue -M all -u $USER

@@ -46,6 +46,8 @@ WANDB_PROJECT = "ant_swarm"
 WANDB_ENTITY  = "kakooee"
 
 # Defaults if config.yaml lacks the `run:` / `sac:` sections.
+from scripts.rl.sac_bc import SAC_BC
+
 RUN_DEFAULTS = dict(
     wandb=True, render_freq=100_000, init_from=None,
     eval=False, eval_model=None, eval_episodes=20,
@@ -63,6 +65,7 @@ SAC_DEFAULTS = dict(
     resume_warmup_steps=0, success_replay=True,
     her_enabled=False, her_n_sampled_goal=4, her_strategy="future",
     use_sde=False, sde_sample_freq=-1,
+    bc_weight=0.0, bc_q_norm=True,
 )
 
 
@@ -374,9 +377,13 @@ def _build_sac_model(env, cfg, s, tb_dir: Path, reach_radius: float):
         )
         return model, True
 
-    model = SAC(
-        policy,
-        env,
+    bc_weight = float(s.get("bc_weight", 0.0))
+    bc_q_norm = bool(s.get("bc_q_norm", True))
+    algo_cls = SAC_BC if bc_weight > 0 else SAC
+
+    model_kwargs = dict(
+        policy=policy,
+        env=env,
         buffer_size=s["buffer_size"],
         batch_size=s["batch_size"],
         learning_starts=s["learning_starts"],
@@ -395,6 +402,12 @@ def _build_sac_model(env, cfg, s, tb_dir: Path, reach_radius: float):
         tensorboard_log=str(tb_dir),
         seed=0,
     )
+    if bc_weight > 0:
+        model_kwargs["bc_weight"] = bc_weight
+        model_kwargs["bc_q_norm"] = bc_q_norm
+        logger.info(f"Using SAC_BC with bc_weight={bc_weight}, bc_q_norm={bc_q_norm}")
+
+    model = algo_cls(**model_kwargs)
 
     if transfer_actor:
         # Load a tiny temporary source model. Copying only the actor deliberately
@@ -407,6 +420,10 @@ def _build_sac_model(env, cfg, s, tb_dir: Path, reach_radius: float):
             buffer_size=1,
             replay_buffer_class=None,
             replay_buffer_kwargs={},
+            custom_objects={
+                "observation_space": env.observation_space,
+                "action_space": env.action_space,
+            },
         )
         model.actor.load_state_dict(source.actor.state_dict(), strict=True)
         del source

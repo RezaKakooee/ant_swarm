@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONDA_ENV="${ANT_SWARM_CONDA_ENV:-roboverse}"
+CONDA_ENV="${ANT_SWARM_CONDA_ENV:-antswarm}"
 
 if [ -f "$PROJECT_ROOT/.env" ]; then
     set -a
@@ -62,11 +62,10 @@ run_job() {
     export PYTHONPATH="$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
     # Load Conda in this non-interactive, detached shell.
-    local conda_sh
-    conda_sh="$(conda info --base)/etc/profile.d/conda.sh"
-    # shellcheck disable=SC1090
-    source "$conda_sh"
-    conda activate "$CONDA_ENV"
+    for p in "/home2/reza/miniconda3/etc/profile.d/conda.sh" "$HOME/miniconda3/etc/profile.d/conda.sh" "/opt/conda/etc/profile.d/conda.sh"; do
+        if [ -f "$p" ]; then source "$p"; conda activate "$CONDA_ENV" 2>/dev/null || true; break; fi
+    done
+    export PATH="/home2/reza/.conda/envs/$CONDA_ENV/bin:$PATH"
 
     echo "========================================"
     echo "Ant Swarm RL Training (local/Azure)"
@@ -127,13 +126,8 @@ if [ -n "$CFG_ARG" ]; then
     CFG_TAG="__$(basename "$CFG_ARG" .yaml)"
 fi
 
-if ! command -v conda >/dev/null 2>&1; then
-    echo "Error: conda is not available in PATH." >&2
-    exit 2
-fi
-if ! conda env list | awk '{print $1}' | grep -Fxq "$CONDA_ENV"; then
-    echo "Error: Conda environment '$CONDA_ENV' does not exist." >&2
-    echo "Set ANT_SWARM_CONDA_ENV to select another environment." >&2
+if [ ! -d "/home2/reza/.conda/envs/$CONDA_ENV" ] && ! command -v conda >/dev/null 2>&1; then
+    echo "Error: Conda environment '$CONDA_ENV' not found." >&2
     exit 2
 fi
 

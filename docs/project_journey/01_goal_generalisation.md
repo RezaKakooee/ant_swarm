@@ -187,3 +187,26 @@ So: the up-route is fully learnable (the toll only costs ~93k extra curriculum s
 - **Code:** ALL generalisation changes are uncommitted (git status: modified `ant_swarm/{ant_swarm,reward,geodesic}.py`, `scripts/rl/{train_sac,train_ppo,train_utils,pose_curriculum}.py`, `ops/sb_train.sh`; new `scripts/rl/goal_curriculum.py`, `configs/rl/gen_[a-f]_*.yaml`). Last commit is 8fc46b7 (blog/public-release tooling).
 - **Public repo:** `~/ant-piano-movers-rl` staged but unpushed; contains none of this chapter's changes.
 - **Docs:** summary table in `docs/GENERALISATION_EXPERIMENTS.md`; this file is the first entry in `docs/project_journey/`.
+
+## Addendum (2026-09-07): the curriculum was not necessary
+
+Every geodesic-reward run in this chapter either resumed a solved checkpoint or
+paired the reward with the pose-path curriculum. The cell "geodesic reward, from
+scratch, **no** curriculum" was never run — it was assumed to fail. Job 241646
+ran exactly variant E (`gen_e_scratch_randall.yaml`) with `curriculum.enabled=false`,
+everything else identical: random start, random goal, `geodesic_exit` reward.
+
+| steps | deterministic eval success | mean episode length | final distance |
+|---|---|---|---|
+| ~910k | **100%** | 124 | 0.0508 m |
+
+Variant E with the curriculum needed 690k steps to master its last anchor and
+~820k to reach 100% on the unpinned eval. Without it: 100% by ~910k. The
+curriculum bought little, if anything, for the single agent. What made the task
+learnable from scratch was the geodesic reward — the BFS field over load poses
+that scores progress along the real route, turns included. (Straight-line
+distance shaping is what "pushes the T into the wall and punishes the turn",
+`notes/what_made_it_work.md`; that sentence had been remembered as being about
+the geodesic reward.) Recorded here because chapter 04 §5 relies on it: for the
+swarm, the same reward without a curriculum gave 0%, so the difference between
+one ant and five is not the curriculum.
