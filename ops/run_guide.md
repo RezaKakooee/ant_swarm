@@ -65,6 +65,29 @@ sbatch --partition=rtx4090 --qos=rtx4090-1day --gres=gpu:1 \
 # also available: titan (titan-1day), l40s (l40s-1day); -6hours/-1week QOS variants
 ```
 
+### MARL v2 (PPO, centralised critic; chapter 04 §10-§12)
+
+These runs are CPU-bound (NumPy env). Use many CPU workers and no GPU.
+`ops/fair_x5_submit.sh` holds the exact submit line; the short form is:
+
+```bash
+sbatch -M cluster -p performance -c 32 --mem=48G -t 24:00:00 -J <name> \
+    -o storage_local/sci_out/<name>_%j.out \
+    --wrap "export PATH=/home2/reza/.conda/envs/antswarm/bin:\$PATH; export PYTHONPATH=$PWD; \
+            export WANDB_ENTITY=kakooee; export OMP_NUM_THREADS=1; cd $PWD; \
+            python -u scripts/rl/train_marl_v2.py --config configs/rl/marl_v2_5ants.yaml \
+            --workers 30 --history 4 --timesteps 20000000 --eval-every 250000 --eval-episodes 30 \
+            --seed 31000 --device cpu"
+
+# switches: --envs-per-worker 5 (5 actor rows per worker step; `steps` = worker steps)
+#           --ckpt-every 1000000 (default; writes ckpt_<steps>.pt)   --resume <ckpt>
+#           --warm-start <single-ant BC .pt>   --stages 2,3,5   --init-actor <pt>
+# smoke test first (fails on a traceback AND on exit 124):
+timeout 900 python scripts/rl/train_marl_v2.py --config configs/rl/marl_v2_1ant.yaml --workers 2 \
+    --history 4 --timesteps 4096 --rollout-steps 256 --eval-every 1024 --eval-episodes 2 \
+    --heldout-episodes 2 --no-wandb --out /tmp/smoke; echo exit=$?
+```
+
 One run id (see `ant_swarm/run_id.py`) names three things identically:
 
 - log:       `storage_local/sci_out/<run_id>.out`
@@ -122,6 +145,17 @@ python scripts/rl/evaluate.py storage_local/<run> --episodes 5
 python scripts/rl/train_sac.py --config-name pnas_dyn_geo_v2 \
     run.eval=true run.eval_model=storage_local/<run>/checkpoints/best/best_model.zip run.eval_episodes=5
 ```
+
+MARL v2 actors (`best.pt`, `final.pt`, `ckpt_*.pt`) are scored on held-out
+seed blocks (60000+, 70000+; 100 episodes each) with:
+
+```bash
+python scripts/rl/eval_marl_v2.py storage_local/<run>/final.pt --history 4 --out storage_local/<run>/heldout_200.json
+# success vs actor rows across runs (chapter 04 §12.1 figure):
+python scripts/tools/samples_curve.py --run single=storage_local/<run_a> --run swarm=storage_local/<run_b> --out figures.png
+```
+
+Quote held-out numbers only. Best-of-N on one 30-episode block inflates.
 
 ## Watch what was learned
 

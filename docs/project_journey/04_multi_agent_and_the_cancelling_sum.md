@@ -575,7 +575,7 @@ does no harm. The literature's rule — never from zero — holds here with a
 number attached. No further from-scratch runs; everything rides on the warm
 start.
 
-Results: pending.
+Results of the §11 pair (single 242212, swarm 242213), written as they came in:
 
 **Interim, 2026-09-10 (both runs still going).** The swarm run reached 100%
 on its 30-episode evaluation by 3.0M steps and stayed at 87-100% (median 100%
