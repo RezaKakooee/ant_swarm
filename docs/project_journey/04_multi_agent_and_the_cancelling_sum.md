@@ -577,6 +577,54 @@ start.
 
 Results: pending.
 
+**Interim, 2026-09-10 (both runs still going).** The swarm run reached 100%
+on its 30-episode evaluation by 3.0M steps and stayed at 87-100% (median 100%
+over 39 evaluations, 10M steps). Its saved best checkpoint scores **91% and
+95%** on two fresh 100-episode blocks (seeds 60000+, 70000+). The single ant
+was at 40-73% on its evaluations at 6.7M steps, still rising.
+Its best checkpoint (5.5M steps) scores **47% and 59%** on the same two fresh
+blocks. Like for like at this point: swarm 91-95%, single ant 47-59%.
+
+**Final (both runs completed, 20M steps each).** Four checkpoints on the same
+two fresh 100-episode blocks:
+
+| checkpoint | steps | seeds 60000+ | seeds 70000+ | mean |
+|---|---|---|---|---|
+| single, best | 13.8M | 86% | 88% | 87% |
+| single, final | 20.0M | 88% | 89% | 88% |
+| swarm, best | 3.0M | 91% | 95% | 93% |
+| **swarm, final** | 20.0M | 94% | 99% | **96%** |
+
+Both learn the task from zero. The swarm is faster (100% on its 30-episode
+evaluation by 3M steps; the single ant needed ~14M) and ends higher (96% vs
+88%), even though the single ant has the easier action (a direct spin). Under
+identical settings, five ants that each see only their own row are not worse
+than one ant — they are better. This is the number to quote for "pure
+decentralised RL", replacing the 30% of §10, which was one seed.
+
+**Does the swarm have a bigger network? No.** The actor is one network shared
+by all ants: 3 outputs for the single ant (fx, fy, spin), 2 for the swarm, so
+the single ant's actor is 257 parameters *larger*. Only the critic grows with
+the ant count (input 5×29 vs 1×29, about +30k parameters), and the critic is
+used in training only. The likely reasons the swarm learns faster:
+
+1. **Five actor samples per env step instead of one.** Same 20M env steps, but
+   100M policy-gradient samples for the swarm against 20M for the single ant.
+2. **More diverse motion early.** Five independent noisy pushes move the load
+   in more directions per step than one push plus a spin, so useful rewards
+   are found sooner.
+3. The shared network sees five viewpoints of every state (five attachment
+   offsets), which is a mild data augmentation.
+
+None of these is proven here; a test would give the single ant five samples
+per step (five envs per worker) and compare again.
+
+This overturns §10's "pure RL saturates at about 30%": that was one seed
+(30000). With seed 31000 and nothing else changed, pure decentralised RL
+matches the distilled swarm (91%) at 3M steps. The 30% run spent 12M steps at
+zero before learning; this one did not. Seed variance is very large for this
+setup and any single-seed number should be read that way.
+
 **Differential tests (local, identical oracle-DAgger data, 29-D rows, Ring).**
 With a *deterministic* actor collecting the DAgger states, both students
 climb — v2 actor + v2 `distil()`: 0→0→5→20%; §9 net + §9 fit: 0→10→10→35%
@@ -664,11 +712,9 @@ Rollout GIFs of both v2 policies are in each run's `renders/`.
 
 *Continuation of the pure-RL arm (241856): 20M more steps from the 20M-step
 actor, critic re-initialised.* It did not keep climbing: 80 evals: first 47%, median 17%, 10-90% band 10-37%, max 50%, last 23%.
-Held-out best: **29%** — the same as before the continuation (30-31%). With
-this recipe — MAPPO with a centralised critic, geodesic reward, 30 workers,
-20-40M steps — pure decentralised RL saturates at about 30% held-out and
-oscillates between 10% and 50% on 30-episode evaluations. Not zero, not
-solved.
+Held-out best: **29%** — the same as before the continuation (30-31%). This
+looked like a plateau at about 30%. It was one seed: a second seed (§11)
+reached 91-95% held-out at 3M steps with nothing else changed.
 
 **The oracle-anchored arm (241765), after its distillation stayed at 0%, ran
 PPO with an MSE anchor to the oracle for 7.3M steps: 29 of 29 evaluations at
@@ -682,11 +728,209 @@ dual-quadruped narrow environments (2602.16353); shape-formation MARL
 "Multi-robot manipulation without communication" (DARS 2014); Gelblum et al.
 2015 (PMC4525283); Feinerman lab, piano-movers ants vs humans (PNAS 2024).
 
+## 11. Fair comparison: one ant vs five ants, same recipe
+
+The numbers "single agent pure RL 0%" (chapter 02: sparse reward, SAC) and
+"swarm pure RL 30%" (§10: geodesic reward, PPO) share almost nothing. The
+single agent with the geodesic reward and no curriculum reached 100% (job
+241646). So the question "how much does the swarm cost" was never measured
+under equal settings. This does.
+
+| item | single | multi |
+|---|---|---|
+| trainer | `train_marl_v2.py`, PPO, centralised critic | same |
+| config | `marl_v2_1ant.yaml` | `marl_v2_5ants.yaml` |
+| ants | 1, at the load's centre | 5, spread layout |
+| reward, observation, history | geodesic_exit, 29-D, 4 frames | same |
+| workers, steps, seed | 30, 20M, 31000 | same |
+| evaluation | 30-episode evals, 100 held-out at the end | same |
+
+The two configs differ only in the `ants:` block (checked with `diff`). One
+difference cannot be removed: a lone ant at the centre has a spin action,
+because a push at the centre gives no torque. Five ants turn the load by
+pushing at different points. Jobs: single 242212 (https://wandb.ai/kakooee/ant_swarm/runs/uote3o0p), multi 242213
+(https://wandb.ai/kakooee/ant_swarm/runs/cn1wjwl9).
+
+Results on 200 held-out episodes (seeds 60000-60099 and 70000-70099): single
+**88%**, swarm **96%**. The full table is in §10 under "Final". The numbers
+were reproduced on 2026-09-10 with `scripts/rl/eval_marl_v2.py`. Run folders:
+`ant__20260909_2334__242212__marl_v2_h4` (single) and
+`ant__20260909_2337__242213__marl_v2_h4` (swarm).
+
+## 12. Why does the swarm learn faster? Actor rows per step
+
+§11 left one guess: the swarm's actor gets five rows per env step, the single
+ant gets one. Same 20M env steps, so 100M actor rows against 20M. Two tests.
+
+### 12.1 Test 2 first: compare at equal actor rows, from the curves we have
+
+Both runs evaluated every 250k steps on 30 episodes. The 30 seeds were the
+same each time. The swarm at step S has seen 5·S actor rows. So compare the swarm at S
+with the single ant at 5·S. Each cell below is the mean of the five
+evaluations nearest that row count. Script: `scripts/tools/samples_curve.py`.
+
+| actor rows | single ant (at step) | swarm (at step) |
+|---|---|---|
+| 5M | 56% (5.0M) | 26% (1.0M) |
+| 10M | 81% (10.0M) | 82% (2.0M) |
+| 15M | 89% (15.0M) | 97% (3.0M) |
+| 20M | 93% (19.5M) | 99% (4.0M) |
+| 25M | — | 99% (5.0M) |
+| 50M | — | 96% (10.0M) |
+| 100M | — | 97% (19.5M) |
+
+![success vs actor rows](figures/ch04_s12_samples_curve.png)
+
+*Left: the W&B x-axis (worker steps = PPO updates × 15,360). Right: x = ants
+× envs per worker × steps. Dots are single evaluations, lines a 5-point
+median. The green line is the single ant with five envs per worker (test 1,
+§12.2); it was added after that run finished.*
+
+**Reading.** On the actor-row axis the two curves match up to 10M rows (81%
+vs 82%). After that the swarm is 6-8 points higher (89% vs 97% at 15M, 93% vs
+99% at 20M). So the row count explains most of the speed difference. It does
+not explain all of it. At equal rows the swarm still ends a few points higher.
+That matches the 88% vs 96% held-out gap at 20M steps.
+
+Three limits of this test:
+
+1. 30-episode evaluations. One episode is 3.3 points. A 6-point gap is within
+   noise for one evaluation, but it holds over the last three rows of the
+   table and over the held-out result.
+2. The single ant's curve ends at 20M rows. So only the first fifth of the
+   swarm's run has a partner. The swarm gains nothing after 5M steps (25M
+   rows) anyway: 99% at 5M steps, 97% at 20M.
+3. The rows are not the same kind. The single ant's 20M rows come from 20M
+   distinct states. The swarm's 100M rows come from 20M states seen from five
+   attachment points. And at equal rows the swarm has had 5× fewer PPO
+   updates. So "equal rows" is not "equal everything". Test 1 (§12.2) fixes
+   both: equal rows *and* equal updates.
+
+**Verdict on the hypothesis, from test 2: mostly supported.** Equal rows give
+equal curves to 10M rows. A small residual advantage for the swarm remains.
+The figure also shows the §12.2 run (green).
+
+### 12.2 Test 1: give the single ant five envs per worker
+
+`train_marl_v2.py` now has `--envs-per-worker E`. Each worker steps E
+independent envs (own seeds: `seed + 7919·worker + 104729·e`) and returns E
+streams. GAE runs per stream, so no episode crosses an env border. Step
+counting: `steps` = worker steps. So with E = 5 the run does 5× the env steps
+and 5× the actor rows of job 242212 at every step count. The batch per PPO
+update (76,800 rows) is then the swarm's. So is the number of updates (1,302). W&B logs `samples/env_steps` and `samples/actor_rows` next to `steps`.
+
+| item | single (242212) | single ×5 (242283) | swarm (242213) |
+|---|---|---|---|
+| ants | 1 | 1 | 5 |
+| envs per worker | 1 | 5 | 1 |
+| actor rows per worker step | 1 | 5 | 5 |
+| rows per PPO update | 15,360 | 76,800 | 76,800 |
+| actor rows at 20M steps | 20M | 100M | 100M |
+| env steps at 20M steps | 20M | 100M | 20M |
+| everything else | config `marl_v2_1ant.yaml`, seed 31000, 30 workers, 4 frames, eval every 250k | same | config `marl_v2_5ants.yaml` |
+
+Submitted with `ops/fair_x5_submit.sh` (job 242283,
+https://wandb.ai/kakooee/ant_swarm/runs/dini8iz1). Checkpoints every 1M steps
+(`ckpt_<steps>.pt`). Job 242284 runs after it. It scores every checkpoint plus
+both §11 finals on the 200 held-out episodes. The table lands in
+`<run>/heldout_200.json` and in `storage_local/sci_out/fair_single_x5_eval_242284.out`.
+
+What each outcome means:
+
+| single ×5 held-out at 20M steps | reading |
+|---|---|
+| ≈ 96%, and ≥ 90% on its 30-episode evals by 3-4M steps | rows per step explain the gap. Hypothesis holds. |
+| ≈ 88%, curve like job 242212 | rows per step are not the cause. Look at the spread layout and its torque leverage. |
+| in between (91-94%) | rows explain part of it, as test 2 suggests. |
+
+Speed on calc-g-010: 21 s per update, against 9-12 s for the §11 runs. The
+run took 9 h 21 min for 20M steps (5× the env steps of job 242212).
+
+**Result.** Every 1M-step checkpoint on the 200 held-out episodes (job
+242284, `heldout_200.json`). The §11 finals are on the same 200 episodes.
+
+| steps | actor rows | single ×5, seeds 60000+ | seeds 70000+ | mean | swarm (same steps, same rows) |
+|---|---|---|---|---|---|
+| 1M | 5M | 31% | 39% | 35% | — |
+| 2M | 10M | 60% | 63% | 62% | — |
+| 3M | 15M | 79% | 81% | 80% | 93% (best.pt) |
+| 4M | 20M | 82% | 85% | 84% | — |
+| 5M | 25M | 88% | 86% | 87% | — |
+| 6M | 30M | 92% | 96% | 94% | — |
+| 8M | 40M | 97% | 99% | 98% | — |
+| 10M | 50M | 98% | 98% | 98% | — |
+| 15M | 75M | 99% | 100% | 100% | — |
+| **20M** | **100M** | **100%** | **100%** | **100%** | **96%** (final.pt) |
+
+Checkpoints 7M, 9M, 11M-14M and 16M-19M are 92-100% and are in the JSON.
+The swarm has only two held-out points because periodic checkpoints did not
+exist before this section.
+
+The three finals side by side, 200 held-out episodes each:
+
+| policy | rows per step | updates | actor rows | seeds 60000+ | seeds 70000+ | mean |
+|---|---|---|---|---|---|---|
+| single ant, 1 env per worker (242212) | 1 | 1,302 | 20M | 88% | 89% | 88% |
+| swarm, 5 ants (242213) | 5 | 1,302 | 100M | 94% | 99% | 96% |
+| **single ant, 5 envs per worker (242283)** | 5 | 1,302 | 100M | **100%** | **100%** | **100%** |
+
+**Reading.**
+
+1. **The end result is explained by rows per step.** With the swarm's row
+   budget, the single ant ends at 100%, above the swarm's 96%. The 88% of
+   §11 was a sample budget, not a limit of one ant. A lone ant with a spin
+   action is at least as good as five ants, given the same number of rows.
+2. **The early speed is not fully explained.** At 3M steps the swarm's best
+   checkpoint scores 93% held-out. The single ant ×5 scores 80% with the same
+   rows and the same update count. On the 30-episode curves the swarm reached
+   100% by 3M steps, the single ant ×5 by 7.5M. So the swarm learns faster in
+   the first 3-5M steps for a reason that is not row count.
+3. **The two kinds of rows differ.** The swarm's five rows per step come from
+   one state seen from five attachment points. The single ant's five rows
+   come from five independent states. The swarm's rows were worth *more* in
+   the early phase, not less. A likely reason: five pushes at five points
+   produce torque and translation at the same time. So the load moves in
+   more useful ways per step than with one push plus a spin. That is a property of
+   the spread layout (§11 noted the spin difference), not of the sample count.
+4. **Update count matters.** At equal rows the single ant ×5 is *below* the
+   plain single ant. The 30-episode curves give 75% vs 93% at 20M rows. The
+   reason: at equal rows it has had 5× fewer updates. So compare runs at equal steps
+   (equal updates) and equal rows together, as in the table above, and not on
+   the row axis alone.
+
+**Verdict.** The hypothesis "five rows per env step is why the swarm learns
+faster" holds for the final level and fails for the early speed. Rows per
+step account for the whole 88% → 96% gap at 20M steps, and more (100%). They
+account for part of the head start (7% → 80% at 3M steps). But the swarm is
+still 13 points ahead at 3M steps, with equal rows and equal updates.
+
+**What this changes in the story.** The number to quote for one ant, pure RL,
+same recipe as the swarm, is now **100%** held-out (job 242283). It was 88%. The swarm's 96% is no longer above the single ant. It is 4 points below,
+at equal rows. The swarm is not better than one ant. It is faster to start.
+
+### 12.3 Trainer changes made for this section
+
+- `--envs-per-worker E` (default 1; E = 1 reproduces every earlier run).
+- `--ckpt-every N` (default 1,000,000): saves actor, critic, optimiser, step
+  count, best score and eval history to `ckpt_<steps>.pt`.
+- `--resume <ckpt>`: continues a single-stage run in the same folder. The
+  worker seeds shift by `steps // 1000` so the envs do not replay their first
+  resets. The W&B run is a new run.
+- `scripts/rl/eval_marl_v2.py`: scores any `.pt` on seed blocks 60000+ and
+  70000+ (100 episodes each). Reproduced §11: swarm 94% / 99%, single 88% / 89%.
+- `scripts/tools/samples_curve.py`: the table and figure of §12.1.
+
+Smoke tests before submission: E = 1, E = 5, resume from a checkpoint, and a
+5-ant run with E = 2. Each ran under `timeout`. Each was checked for exit 124
+and for a traceback. All four passed.
+
 ## Remaining limitations
 
 - **Decentralised policies now exist at three levels (§9, §10).** Distilled
   from the oracle: 91% held-out. Distilled then PPO: 84%. Pure decentralised RL
-  from zero: 31% and climbing at 20M steps. Unseen attachment layouts: still 0%. Everything before it was 0%, and the
+  from zero: 96% (5 ants) and 88% (1 ant) under one recipe, §11; the single
+  ant with the swarm's row budget reaches 100% (§12.2); an earlier swarm
+  seed gave 30%. Unseen attachment layouts: still 0%. Everything before it was 0%, and the
   formula-based base (§8) needs an N the ant cannot obtain. The only working
   controller is centralised: one brain computing a wrench and dividing it.
 - **Not tried:** the residual and critic parts of §7 (blocked: the base needs N, §8);
@@ -698,9 +942,12 @@ dual-quadruped narrow environments (2602.16353); shape-formation MARL
   of the stem, so its arm is zero and it can produce no torque at all. It is
   excluded from every push-only test.
 
-## Exact state right now (2026-09-08)
+## Exact state right now (2026-09-10)
 
-- **Running:** nothing.
+- **Running:** nothing. Jobs 242283 (single ant ×5, §12.2) and 242284 (its
+  held-out table) completed on 2026-09-10.
+- **§12 run:** `ant__20260910_1013__242283__marl_v2_h4_x5` with `ckpt_*.pt`
+  every 1M steps, `best.pt`, `final.pt` (100% held-out), `heldout_200.json`.
 - **MARL v2 runs:** `ant__20260908_0327__241788__marl_v2_warm_h4` (distilled+PPO,
   held-out 84%), `ant__20260908_0327__241789__marl_v2_h4` (pure RL, 31%) and its
   continuation 241856 (29%); `best.pt`/`final.pt`, `results.json`, `renders/` in

@@ -171,9 +171,12 @@ steps, keep the best-by-eval checkpoint. 97% on 100 fresh starts. The
 full-policy variant collapses to 0%. Checkpoint:
 `storage_local/ant__20260906_0950__240957__finetune_bc_residual/best.zip`.
 
-The multi-agent work (five decentralised attempts, all 0%, and the measured
-cancelling-sum obstacle) is in
-`docs/project_journey/04_multi_agent_and_the_cancelling_sum.md`.
+The multi-agent work is in
+`docs/project_journey/04_multi_agent_and_the_cancelling_sum.md`. As of
+2026-09-10: a swarm of 5 ants, each seeing only its own row, distilled from an
+oracle reaches 91%; pure decentralised RL from zero reaches **96%** (and 88%
+for a single ant under the same recipe, §11). Earlier 0% and 30% results came
+from a worker-seed bug and from seed variance.
 
 ## 8. Open question, as of 2026-09-05: contact recovery
 

@@ -16,6 +16,16 @@ and adds the two other standard ingredients.
   D  parallel envs          --workers N processes, each with its own env
   E  team-size staging      --stages 2,3,5: actor carried over, critic rebuilt
                             (a curriculum over N, not over the maze)
+  F  envs per worker        --envs-per-worker 5: each worker steps 5 independent
+                            envs, so one worker step gives 5 actor rows for a
+                            single ant, as one env step does for 5 ants (§12)
+  G  periodic checkpoints   --ckpt-every 1000000: ckpt_<steps>.pt with actor,
+                            critic and optimiser; --resume <ckpt> continues
+
+Step counting: `steps` = worker steps = env steps per env summed over workers.
+With --envs-per-worker 1 this is the env-step count of every earlier run. With
+E envs per worker the env-step count is E x steps and the actor-row count is
+n_ants x E x steps; both are logged under `samples/`.
 
 Reward: geodesic_exit (chapter 01). No maze curriculum. Evaluation is always
 the real task: fresh env, random start, random goal, deterministic actor.
@@ -48,7 +58,7 @@ from ant_swarm.compute import resolve_device        # noqa: E402
 from ant_swarm.run_id import build_run_id           # noqa: E402
 from ant_swarm.tracking import Tracker             # noqa: E402
 
-ACT_DIM = 2
+ACT_DIM = 2   # set at runtime from the env: 2 = (fx, fy); 3 = (fx, fy, spin) for one ant
 STUDENT_OBS = 27
 
 
@@ -58,15 +68,16 @@ STUDENT_OBS = 27
 class Actor(nn.Module):
     """Shared per-ant actor: own row -> tanh-squashed Gaussian over [angle, force]."""
 
-    def __init__(self, obs_dim, hidden=256, init_log_std=-1.0):
+    def __init__(self, obs_dim, hidden=256, init_log_std=-1.0, act_dim=None):
         super().__init__()
+        act_dim = int(act_dim or ACT_DIM)
         # the §9 student's body (3x256 ReLU): in the differential test it distilled to
         # 35% where the 2x256 tanh body reached 20% (and 5% with the same optimiser)
         self.body = nn.Sequential(nn.Linear(obs_dim, hidden), nn.ReLU(),
                                   nn.Linear(hidden, hidden), nn.ReLU(),
                                   nn.Linear(hidden, hidden), nn.ReLU())
-        self.mu = nn.Linear(hidden, ACT_DIM)
-        self.log_std = nn.Parameter(torch.full((ACT_DIM,), float(init_log_std)))
+        self.mu = nn.Linear(hidden, act_dim)
+        self.log_std = nn.Parameter(torch.full((act_dim,), float(init_log_std)))
 
     def dist(self, obs):
         mu = self.mu(self.body(obs))
@@ -113,9 +124,11 @@ class Ring:
 
 
 def to_env_action(a):
-    """Force vector (fx, fy) in [-1,1]^2 -> env action [push_angle, force]."""
+    """(fx, fy[, spin]) in [-1,1] -> env action [push_angle, force[, spin]]."""
     out = np.empty_like(a); out[..., 0] = np.arctan2(a[..., 1], a[..., 0])
-    out[..., 1] = np.clip(np.linalg.norm(a, axis=-1), 0.0, 1.0)
+    out[..., 1] = np.clip(np.linalg.norm(a[..., :2], axis=-1), 0.0, 1.0)
+    if a.shape[-1] == 3:
+        out[..., 2] = a[..., 2]
     return out.astype(np.float32)
 
 
@@ -125,7 +138,7 @@ def to_env_action(a):
 _W = {}
 
 
-def _w_init(cfg_path, layout, seed, student_path, student_vel_div, history=1, sanity=None):
+def _w_init(cfg_path, layout, seed, student_path, student_vel_div, history=1, sanity=None, envs_per_worker=1):
     torch.set_num_threads(1)
     # Pool passes the SAME initargs to every worker. Without this line all 30 workers
     # ran the same seed -> identical envs, spawns and (with deterministic collection)
@@ -139,8 +152,13 @@ def _w_init(cfg_path, layout, seed, student_path, student_vel_div, history=1, sa
     cfg = load_config(cfg_path).copy()
     if layout is not None:
         cfg.ants.n = len(layout); cfg.ants.offsets = [list(map(float, p)) for p in layout]
-    env = AntSwarmEnv(config=cfg, seed=seed); env.reset(seed=seed)
-    _W.update(env=env, obs_dim=int(env.obs_model.obs_dim), n=int(cfg.ants.n), student=None)
+    # E independent envs per worker (chapter 04 §12). Env e gets seed + 104729*e, so
+    # the first env keeps the seed every earlier run used and no two envs share one.
+    envs = []
+    for e in range(int(envs_per_worker)):
+        env = AntSwarmEnv(config=cfg, seed=seed + 104729 * e); env.reset(seed=seed + 104729 * e); envs.append(env)
+    env = envs[0]
+    _W.update(env=env, envs=envs, obs_dim=int(env.obs_model.obs_dim), n=int(cfg.ants.n), student=None)
     if student_path:
         # ORACLE labeller: the split controller (chapter 04 §2/§9). Unlike a distilled
         # student it is right at ANY state, which is what DAgger needs once the actor
@@ -156,9 +174,16 @@ def _student_rows(obs):
 
 
 def _w_rollout(args):
+    """One rollout of `steps` per env in this worker. Returns a LIST of streams
+    (one dict per env) so that GAE in the main process never crosses env borders."""
     state_dict, steps, max_steps, drive = (list(args) + ["actor"])[:4]
-    env, n, obs_dim, K = _W["env"], _W["n"], _W["obs_dim"], _W["hist_k"]
-    actor = Actor(obs_dim * K); actor.load_state_dict(state_dict); actor.eval()
+    n, obs_dim, K = _W["n"], _W["obs_dim"], _W["hist_k"]
+    act_dim = int(_W["env"].action_space.shape[-1])
+    actor = Actor(obs_dim * K, act_dim=act_dim); actor.load_state_dict(state_dict); actor.eval()
+    return [_w_rollout_env(env, actor, n, obs_dim, K, steps, max_steps, drive) for env in _W["envs"]]
+
+
+def _w_rollout_env(env, actor, n, obs_dim, K, steps, max_steps, drive):
     ring = Ring(n, obs_dim, K)
     O, A, LP, R, D, G, S = [], [], [], [], [], [], []
     rets, succ, ep_ret, k = [], [], 0.0, 0
@@ -178,7 +203,7 @@ def _w_rollout(args):
                     a_np = S[-1]; lp = torch.zeros(n); raw_np = np.arctanh(np.clip(a_np, -0.999, 0.999))
             _, rew, term, trunc, info = env.step(to_env_action(a_np)); k += 1
             if _W["sanity"] == "push":          # known-solvable: reward = mean |f| (max ~1.41)
-                rew = float(np.linalg.norm(a_np, axis=1).mean())
+                rew = float(np.linalg.norm(a_np[:, :2], axis=1).mean())
             done = bool(term or trunc or k >= max_steps)
             O.append(x.copy()); A.append(raw_np); LP.append(lp.numpy()); R.append(float(rew)); D.append(float(done))
             G.append(obs.reshape(-1).copy()); ep_ret += float(rew)
@@ -270,6 +295,10 @@ def main():
     p.add_argument("--init-actor", default=None, help="continue from a saved actor (best.pt/final.pt); critic starts fresh")
     p.add_argument("--stage-steps", type=int, default=4_000_000, help="max env steps per non-final stage")
     p.add_argument("--stage-sr", type=float, default=50.0, help="promote when eval SR >= this twice in a row")
+    p.add_argument("--envs-per-worker", type=int, default=1,
+                   help="independent envs stepped by each worker per worker step (§12: 5 gives a single ant the swarm's row count)")
+    p.add_argument("--ckpt-every", type=int, default=1_000_000, help="save ckpt_<steps>.pt (actor+critic+optimiser) every this many steps; 0 = off")
+    p.add_argument("--resume", default=None, help="continue from a ckpt_*.pt: actor, critic, optimiser, step count and eval history are restored")
     p.add_argument("--eval-every", type=int, default=250_000)
     p.add_argument("--eval-episodes", type=int, default=30)
     p.add_argument("--heldout-episodes", type=int, default=100)
@@ -286,7 +315,11 @@ def main():
     cfg = load_config(args.config)
     K = int(args.history)
     tag = "marl_v2" + ("_warm" if args.warm_start else "") + ("_cont" if args.init_actor else "") + (f"_h{K}" if K > 1 else "") + (f"_stages{args.stages.replace(',', '-')}" if args.stages else "")
-    out = Path(args.out) if args.out else Path("storage_local") / build_run_id(tag)
+    resume = torch.load(args.resume, map_location=dev, weights_only=True) if args.resume else None
+    if resume is not None and args.stages:
+        raise SystemExit("--resume supports single-stage runs only")
+    # a resumed run keeps writing into the folder it came from unless --out says otherwise
+    out = Path(args.out) if args.out else (Path(args.resume).parent if resume is not None else Path("storage_local") / build_run_id(tag))
     out.mkdir(parents=True, exist_ok=True); logger.add(out / "train.log", level="INFO")
     tr = Tracker(name=out.name, group="marl_v2", tags=["marl", "v2"] + (["warm"] if args.warm_start else []) + (["staged"] if args.stages else []),
                  config=vars(args), enabled=args.wandb)
@@ -298,11 +331,13 @@ def main():
     else:
         n0 = int(cfg.ants.n); lay0 = [list(map(float, q)) for q in cfg.ants.offsets] if getattr(cfg.ants, "offsets", None) is not None else None
         layouts = [(n0, lay0)]
-    probe = AntSwarmEnv(config=cfg, seed=0); obs_dim = int(probe.obs_model.obs_dim); probe.close()
-    logger.info(f"MARL v2: obs_dim={obs_dim} stages={[(n, len(l) if l else None) for n, l in layouts]} workers={args.workers} "
-                f"warm={'yes' if args.warm_start else 'no'} device={dev}")
+    probe = AntSwarmEnv(config=cfg, seed=0); obs_dim = int(probe.obs_model.obs_dim)
+    global ACT_DIM
+    ACT_DIM = int(probe.action_space.shape[-1]); probe.close()
+    logger.info(f"MARL v2: obs_dim={obs_dim} act_dim={ACT_DIM} stages={[(n, len(l) if l else None) for n, l in layouts]} workers={args.workers} "
+                f"envs/worker={args.envs_per_worker} warm={'yes' if args.warm_start else 'no'} device={dev}")
 
-    actor = Actor(obs_dim * K, init_log_std=(-2.0 if args.warm_start else args.init_log_std)).to(dev)
+    actor = Actor(obs_dim * K, init_log_std=(-2.0 if args.warm_start else args.init_log_std), act_dim=ACT_DIM).to(dev)
     if args.init_actor:
         blob = torch.load(args.init_actor, map_location=dev, weights_only=True)
         actor.load_state_dict(blob["actor"])
@@ -310,14 +345,21 @@ def main():
     ctx = get_context("fork")
     steps_done, best, history, t0 = 0, -1.0, [], time.time()
     final_n = layouts[-1][0]
+    if resume is not None:
+        actor.load_state_dict(resume["actor"])
+        steps_done, best, history = int(resume["steps"]), float(resume.get("best", -1.0)), list(resume.get("history", []))
+        logger.info(f"resumed from {args.resume} at {steps_done} steps (best so far {best:.1f}%)")
+    E = int(args.envs_per_worker)
 
     for si, (n, layout) in enumerate(layouts):
         last_stage = si == len(layouts) - 1
         pool = ctx.Pool(args.workers, initializer=_w_init,
-                        initargs=(args.config, layout, args.seed + 1000 * si, args.warm_start, float(n), K, args.sanity_reward))
+                        initargs=(args.config, layout, args.seed + 1000 * si + steps_done // 1000, args.warm_start, float(n), K, args.sanity_reward, E))
         critic = CentralCritic(n, obs_dim).to(dev)
         opt = torch.optim.Adam([{"params": actor.parameters(), "lr": args.lr},
                                 {"params": critic.parameters(), "lr": args.lr}])
+        if resume is not None:
+            critic.load_state_dict(resume["critic"]); opt.load_state_dict(resume["opt"])
         logger.info(f"=== stage {si}: n={n} ===")
 
         if args.warm_start and si == 0:
@@ -328,7 +370,7 @@ def main():
             X_all, Y_all = [], []
             for rnd in range(args.distil_rounds + 1):
                 drive = "student" if rnd == 0 else "actor_det"   # round 0: the oracle drives; then the deterministic actor
-                parts = pool.map(_w_rollout, [(actor.state_dict(), 512, 500, drive)] * args.workers)
+                parts = [pt for lst in pool.map(_w_rollout, [(actor.state_dict(), 512, 500, drive)] * args.workers) for pt in lst]
                 X_all.append(np.concatenate([pt["O"].reshape(-1, obs_dim * K) for pt in parts]))
                 Y_all.append(np.concatenate([pt["S"].reshape(-1, ACT_DIM) for pt in parts]))
                 if rnd == 0:
@@ -341,10 +383,11 @@ def main():
                 if rnd > 0 and sr0 >= st_sr - args.distil_stop:
                     logger.info("distillation close enough to the oracle -> start PPO"); break
         stage_start, promote_hits, next_eval = steps_done, 0, steps_done + args.eval_every
+        next_ckpt = steps_done + args.ckpt_every if args.ckpt_every > 0 else float("inf")
         while steps_done < args.timesteps:
             if not last_stage and steps_done - stage_start >= args.stage_steps:
                 logger.info(f"stage {si}: step budget reached -> promote"); break
-            parts = pool.map(_w_rollout, [(actor.state_dict(), args.rollout_steps, 500)] * args.workers)
+            parts = [pt for lst in pool.map(_w_rollout, [(actor.state_dict(), args.rollout_steps, 500)] * args.workers) for pt in lst]
             # ----- advantages per worker stream, shared by the team
             Os, As, LPs, ADVs, RETs, Ss, Gs = [], [], [], [], [], [], []
             with torch.no_grad():
@@ -361,7 +404,8 @@ def main():
             RET = torch.as_tensor(np.concatenate(RETs), device=dev); G = torch.as_tensor(np.concatenate(Gs), device=dev)
             S = torch.as_tensor(np.concatenate(Ss), device=dev) if Ss else None
             ADV = (ADV - ADV.mean()) / (ADV.std() + 1e-8)
-            steps_done += sum(len(pt["R"]) for pt in parts)
+            # worker steps: env steps per env, summed over workers (= env steps when E == 1)
+            steps_done += sum(len(pt["R"]) for pt in parts) // E
             # ----- PPO
             N_a, N_c = len(O), len(G)
             for _ in range(args.epochs):
@@ -380,7 +424,8 @@ def main():
             rets = [r for pt in parts for r in pt["rets"]]; succ = [s for pt in parts for s in pt["succ"]]
             ep_ret, ep_succ = (float(np.mean(rets)) if rets else float("nan")), (float(np.mean(succ)) if succ else float("nan"))
             tr.log({"rollout/ep_return": ep_ret, "rollout/ep_success": ep_succ, "train/pg_loss": float(pg), "train/vf_loss": float(vloss),
-                    "train/log_std": float(actor.log_std.mean()), "train/mean_force": float(np.linalg.norm(np.concatenate(As), axis=1).mean()) if False else float(torch.tanh(A).norm(dim=1).mean()), "stage/n": n}, step=steps_done)
+                    "train/log_std": float(actor.log_std.mean()), "train/mean_force": float(torch.tanh(A).norm(dim=1).mean()), "stage/n": n,
+                    "samples/env_steps": steps_done * E, "samples/actor_rows": steps_done * E * n}, step=steps_done)
             logger.info(f"[n={n}] {steps_done:>10} steps  ep_ret={ep_ret:.3f} ep_succ={ep_succ:.3f}  pg={float(pg):.4f} vf={float(vloss):.4f}  |f|={float(torch.tanh(A).norm(dim=1).mean()):.3f} log_std={float(actor.log_std.mean()):.2f}  ({time.time()-t0:.0f}s)")
             if steps_done >= next_eval:
                 next_eval += args.eval_every
@@ -395,6 +440,12 @@ def main():
                     promote_hits = promote_hits + 1 if sr >= args.stage_sr else 0
                     if promote_hits >= 2:
                         logger.info(f"stage {si}: SR>={args.stage_sr} twice -> promote"); break
+            if steps_done >= next_ckpt:
+                next_ckpt += args.ckpt_every
+                torch.save({"actor": actor.state_dict(), "critic": critic.state_dict(), "opt": opt.state_dict(),
+                            "obs_dim": obs_dim, "n": n, "layout": layout, "steps": steps_done, "best": best, "history": history,
+                            "envs_per_worker": E}, out / f"ckpt_{steps_done:09d}.pt")
+                logger.info(f"  checkpoint -> ckpt_{steps_done:09d}.pt")
         pool.close(); pool.join()
 
     torch.save({"actor": actor.state_dict(), "obs_dim": obs_dim, "n": final_n, "layout": layouts[-1][1], "steps": steps_done}, out / "final.pt")

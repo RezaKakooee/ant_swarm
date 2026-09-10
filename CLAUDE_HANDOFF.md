@@ -1,3 +1,9 @@
+> **2026-09-10 update:** The swarm question is answered too. Five ants, each
+> seeing only its own row, no teacher, no map, no curriculum: **96%** held-out
+> with MAPPO from zero (one ant, same recipe: 88%). See
+> `docs/project_journey/04_multi_agent_and_the_cancelling_sum.md` §11 and
+> `ops/handoff_next_chat.md`.
+
 > **2026-09-05 correction:** A stale goal-reference bug corrupted the goal
 > vectors in every cached transition. Fixing it and retraining the same BC
 > architecture achieved **91/100 held-out successes**, without curriculum or a
