@@ -1,4 +1,4 @@
-# Can a swarm of AI ants solve the puzzle?
+# Can multiple AI agents solve the piano-movers puzzle together?
 
 Project page for part two of the ant piano-movers experiment: five and ten RL
 agents, each seeing only its own small view, learn to carry a T-shaped load

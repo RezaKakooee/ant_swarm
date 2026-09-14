@@ -1,4 +1,4 @@
-# Can an AI agent solve the puzzle that ants solve?
+# Can an AI agent solve the piano-movers puzzle that ants solve?
 
 ## 1. The ants
 
@@ -294,6 +294,159 @@ There is also plenty left to improve in what already exists. My slit is still a
 bit wider than the paper's. The teacher is a strong crutch — I would like to see
 how far one can get with a weaker one. And I only ran the teacher setup with SAC, never
 with PPO.
+
+## Addendum: what happened after this post
+
+This post ended with one agent, one start, one goal. Three things happened
+next, before the [swarm post](https://rezakakooee.github.io/ant-swarm-rl/).
+They are the bridge between the two, so here they are, in the order they
+happened.
+
+### A. Any start, any goal
+
+The agent above knew exactly one start pose and one goal. I wanted one that
+can begin anywhere in the start room, at any angle, and reach a goal drawn
+anywhere in the goal room.
+
+First I measured how far the fixed-goal agent already got, with no extra
+training:
+
+| setting | success |
+|---|---|
+| its own task: fixed start, fixed goal | 100% |
+| random start, fixed goal | 62% |
+| fixed start, random goal | 12% |
+| random start and random goal | 6% |
+
+Random starts were half solved. Random goals were the real problem. And the
+reason was simple once I found it: during training the goal never moved, so
+the agent never learned to read the goal input. An input that never changes
+is an input the network ignores.
+
+The obvious fix is to make a BFS map for every goal. I did that for five
+goals, trained on them one after the other, and got 100% on the two goals
+the agent practised first and 0% on the other three. It had memorised, not
+learned.
+
+<img src="assets/any_start_any_goal.png" alt="The maze with the random start zone, the random goal box, and the two legs of the reward" width="720">
+
+The fix that worked is a reward in two legs. The hard part of the maze, the
+two slits and the turn, is the same for every goal. So the first leg uses
+one map, flooded from a fixed exit point just past the second slit. Once the
+whole load is through the second slit, the second leg takes over: plain
+straight-line distance to the actual goal, which is safe in an open room.
+One map, learned once, for every goal.
+
+With this reward, and goals drawn from the whole box so there was nothing to
+memorise, the agent reached **99 to 100%** on random starts and random
+goals. The curriculum from section 8 turned out to be optional here: the same
+run with no curriculum at all also reached 100%, at about 910,000 steps.
+What made the task learnable from scratch was the map in the reward, not
+the stages.
+
+### B. Trying to drop the teacher
+
+The map is a strong crutch. It knows the whole maze. I wanted to know how
+far an agent gets with no map at all: sparse reward, a point only when the
+load reaches the goal, random start and random goal, no curriculum. Plain
+SAC had already failed at this in section 7. So I tried the four standard
+tools for hard-exploration tasks, each as a switch in the same trainer.
+
+<img src="assets/four_methods.png" alt="Four sketches: hindsight goal relabelling, an exploration bonus for new poses, exploration noise held for many steps, and Go-Explore's return-then-explore loop" width="720">
+
+- **Hindsight experience replay (HER).** The agent almost never reaches the
+  goal, so it almost never sees a reward. HER cheats in a useful way. After
+  a failed episode, it pretends that wherever the load ended *was* the goal,
+  and stores the episode again with that goal. Now every episode teaches
+  something: how to get to that place. The hope is that "how to get to
+  places" adds up to "how to get to the goal".
+- **An exploration bonus.** A small extra reward for every pose of the load
+  the agent has not seen often. Poses it visits all the time pay nothing.
+  A new pose pays well. This pushes the agent toward the unknown even when
+  the real reward is silent.
+- **gSDE, slower exploration noise.** Ordinary RL adds a fresh random wobble
+  to every action. That is fine for small steps, but a wobble that changes
+  every step averages out to nothing over a long push. gSDE picks one random
+  direction and keeps it for 64 steps, so the agent tries real, sustained
+  moves.
+- **Go-Explore.** The strongest of the four. Keep an archive of every pose
+  the load has reached, with the exact actions that got there. Pick a
+  promising pose, replay those actions to return to it exactly, then push
+  randomly from there and add anything new to the archive. It never
+  forgets a place it has been.
+
+<img src="assets/frontier_wall.png" alt="The maze with the region reached by every method shaded: everything up to x = 0.900, in front of the second slit" width="720">
+
+None of them crossed the second slit. The two Go-Explore runs got furthest,
+to x = 0.900, just inside the corridor. The archive grew to 14,000 poses and
+that frontier did not move by a millimetre. The HER runs barely left the
+first room: they never got a crossing to relabel. The bonus ran out of new
+poses on the near side. gSDE brought the load to the slit and no further.
+
+| method | steps | success |
+|---|---|---|
+| HER | 1.7M | 0% |
+| HER + exploration bonus | 1.6M | 0% |
+| HER + gSDE | 2.0M | 0% |
+| all three | 1.4M | 0% |
+| Go-Explore, two grid sizes | 3.0M and 4.9M | 0 crossings |
+
+The second slit needs the load in the right place *and* at the right angle
+at the same time, and only a thin set of poses does both. Random pushes
+never produce even one crossing, so none of these methods ever gets the one
+example it needs. More samples do not help. A signal that says "turn away
+from the goal now" is what is missing, and none of these tools provides
+it.
+
+### C. A teacher from demonstrations, and the bug that hid it
+
+If the map cannot be dropped, maybe it can be hidden. Use it once, to make
+demonstrations, then train a policy that copies them and never sees the map
+again.
+
+A planner that walks the load downhill on the map solved 34,777 episodes,
+random starts and random goals, every step recorded. Then behaviour
+cloning: a network that takes the load's pose, speed and the goal, and
+outputs the planner's action. No reward, no map, no curriculum.
+
+It scored 0%. Not once or twice: for eleven days, in every variant I could
+think of. More data, five million transitions instead of half a million.
+Action chunks. A frame stack. Noise on the actions. A discrete torque head.
+DAgger. Each one 0 to 5%. The load reached the first slit and stopped.
+
+The cause was one line of code. The observation module stored the goal by
+reference when the environment was built. Every script that changed the goal
+later replaced the array instead of writing into it. So the reward saw the
+new goal, the success check saw the new goal, the renders showed the new
+goal. The observation kept the first one. For all 4.9 million stored
+transitions, the goal input was the same two numbers.
+
+<img src="assets/frozen_goal.png" alt="The goal box with the real goals of the demonstrations scattered across it, and the single frozen goal the network saw" width="720">
+
+Every policy in those eleven days was asked to reach a moving goal while
+being told that the goal never moves. Of course it stopped at the first
+slit: from there on, the route depends on the goal.
+
+Two things I keep from this. First, the one experiment that ever moved the
+number, replacing the goal input with a direction from the map, took
+success from 0% to 84%. I read it as "the policy wants waypoints". It was
+telling me "the goal input is broken". When one input swap changes
+everything, check the input. Second, my evaluation had its own bug: it took
+the first N episodes of the dataset, and the first 534 episodes all share
+one start pose. Every success rate I had quoted was measured on one start.
+
+With both fixed, and nothing else changed, the same behaviour cloning
+scored **88 to 95%** on fresh random starts and goals. Then I put RL on top,
+two ways. Let it change the whole policy: it collapsed to 0%, saved only by
+keeping the best checkpoint. Let it add only a small bounded correction to
+the frozen cloned policy: **97%**.
+
+<img src="assets/il_numbers.png" alt="Bar chart: copying with the bug 0 percent, copying fixed 88 to 95 percent, RL with full freedom 0 percent, RL as a bounded correction 97 percent" width="720">
+
+<img src="assets/residual_success.gif" alt="The cloned policy with the bounded RL correction solving a fresh episode" width="720">
+
+This 97% policy, trained without ever seeing the map, is the single-agent
+brain that the swarm post starts from.
 
 ## Come and play with it
 

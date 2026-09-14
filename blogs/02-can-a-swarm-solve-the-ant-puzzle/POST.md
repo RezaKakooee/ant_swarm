@@ -1,6 +1,6 @@
-# Can a swarm of AI ants solve the puzzle?
+# Can multiple AI agents solve the piano-movers puzzle together?
 
-This is part two of a side project. The puzzle comes from a real experiment
+This is part two. The puzzle comes from a real experiment
 with ants. A T-shaped load has to go from one room, through a narrow slit,
 into a short corridor, and out through a second slit into the goal room. The
 big head of the T does not fit through a slit straight on. So the load has to
@@ -51,8 +51,18 @@ The maze is the same. The task is harder than in post 1, in three ways.
   first step of training.
 
 The BFS teacher is still there, but only as a reward: a small reward for
-every step that brings the load closer to the goal along the real route. And
-"success" everywhere in this post means: 200 fresh episodes, with start
+every step that brings the load closer to the goal along the real route.
+
+A random goal raises one question: a map to where? The map from post 1 was
+flooded from one goal. I did not want a new map for every goal. So the
+reward has two legs. The first leg uses one map, flooded from a fixed point
+just past the second slit. It is the same for every goal, because every
+route has to pass that point. Once the whole load is through the second
+slit, the second leg takes over: plain straight-line distance to the actual
+goal, which is fine in an open room. The hard part of the maze is learned
+once, from one map.
+
+And "success" everywhere in this post means: 200 fresh episodes, with start
 poses and goals the ants never saw in training.
 
 What really changes is who is holding the load.
@@ -86,8 +96,25 @@ the load itself. When one ant pushes, the others feel the load move.
 Before training anything, I checked one thing. Can many small pushes even do
 what one big push did?
 
-I took the single-agent policy from post 1 and split its push across N ants
-with a formula.
+For that I needed a single agent that can do *this* task, with a random
+start and a random goal. The agent from post 1 cannot. It knew one start and
+one goal. So I built a new one, and since it plays the teacher for the rest
+of this post, here is what it is made of.
+
+- **A planner.** The BFS map from post 1 gives every pose of the load a
+  distance to the goal along the real route. A planner that always steps to
+  a lower distance walks the load through the maze. It is not a policy, it
+  is a search, and it needs the map. I ran it from 34,777 random starts to
+  random goals and recorded every step.
+- **A single-agent brain.** A network trained to copy those recordings.
+  Given the load's pose, its speed and the goal, it outputs one push and one
+  turn for the whole load. It does not need the map any more. On its own it
+  solves 88 to 95% of fresh episodes.
+- **The formula**, which comes next. It takes the brain's one push and one
+  turn and divides them among N ants.
+
+Brain plus formula is the teacher. I took its push and split it across N
+ants.
 
 Here is the formula in words. The single agent produces two things each step:
 a push (a direction and a strength) and a turn. Now N ants have to produce the
@@ -171,6 +198,11 @@ reward for the whole team.
 | 4. PPO, reward only for success | RL | 0% |
 | 5. PPO, BFS reward | RL | 0% |
 
+I also tried the curriculum from post 1 with five ants: start near the goal,
+move the start back stage by stage. Sixteen stages. The ants mastered the
+first one and then sat at the second for five million steps. On the real
+task: zero. So the curriculum does not rescue the swarm either.
+
 The strange thing was the first three. The ants were learning the teacher's
 pushes almost perfectly. The training error was tiny. Each ant was one to five
 percent off. And the load went nowhere.
@@ -224,15 +256,52 @@ pushes is what breaks.
 
 The measurement told me what to fix. It took two rounds.
 
-**Round one: a teacher that hands out pushes.** Instead of hoping the ants find
-the right pushes, I let the formula from section 3 label them. Each ant
-learned to copy its own share. To keep the ants on the road, I used DAgger:
-let the students drive, let the teacher say what they should have done, learn
-from that, repeat.
+**Round one: a teacher that hands out pushes.** The three imitation attempts
+in section 4 all worked the same way. Let the teacher drive the load through
+the maze, record what each ant should push at every step, and train the ants
+to copy it. That is plain behaviour cloning, and it gave zero.
+
+Here is the problem with it. The ants only ever saw the teacher's own
+episodes: clean, correct routes. A student that is 3% wrong drifts a little
+off that route on its first steps. Now it is in a situation the teacher
+never showed it, so it is more wrong there. It drifts further. After fifty
+steps it is somewhere the training data never covered, and the load is
+against a wall. The small error compounds, and no amount of extra teacher
+episodes fixes it, because the teacher never makes those mistakes.
+
+The fix is called DAgger, and it is simple. Let the **students** drive. Record
+the situations they get themselves into, mistakes and all. Then ask the
+teacher: in each of these situations, what should each ant have pushed? Add
+those answers to the training data and retrain. Repeat. Every round, the
+ants get corrections for exactly the situations they actually end up in.
+
+It climbed round by round:
+
+| round | 0 | 2 | 4 | 7 | 10 | 11 | 15 |
+|---|---|---|---|---|---|---|---|
+| success | 0% | 16% | 46% | 60% | 70% | 84% | 92% |
+
+The teacher itself scores 93% on the same episodes, so at round 15 the
+students had caught up with it. Two details mattered along the way:
+
+- **A short memory.** Giving each ant its last four views instead of one
+  made a big difference early: 73% against 43% at round 8. A single view
+  does not show how the load is moving. Four views do.
+- **Where the ants hold.** My first layout had put all five ants on the big
+  head by chance. Spreading them out, two on each head and one in the
+  middle, made the turn much easier and the learning much faster: 82% by
+  round 3 instead of 28%.
 
 That gave the first non-zero result: **91%** on 200 fresh episodes. Five ants,
 each seeing only its own view. A small victory, but a borrowed one. It
 needed the formula, and the formula needs to know where all the ants are.
+
+My first idea was to improve the 91% with RL. Take the copied policy, keep
+training it with PPO, let it find what the teacher could not show it. That
+went badly. Without something holding it near the teacher, PPO took an 87%
+policy to 0% in a few million steps. With a leash, a penalty for moving away
+from the teacher's pushes, it ended at 84%. Lower than where it started. RL
+on top of a good policy did not add anything here. It only took away.
 
 **Round two: pure learning, no formula.** I wanted the ants to find the pushes
 themselves. Looking at what works in the literature on this kind of task, my
@@ -253,6 +322,13 @@ setup was missing three things:
 
 With those three, and nothing else, pure multi-agent RL learned the maze.
 Five ants, from zero, no formula, no demonstrations.
+
+Not on the first try, though. The first run sat at zero for twelve million
+steps, then crept up to 30%, and stayed there for another twenty million. I
+was ready to write "pure RL gets you 30%". Then I changed one thing, the
+random seed, and the next run reached 96%. Same code, same settings. I do
+not have a good explanation. I do have a rule now: never quote a number from
+one run. More on that at the end.
 
 ## 7. A fair fight: one ant against five
 

@@ -1,4 +1,4 @@
-# Can an AI agent solve the puzzle that ants solve?
+# Can an AI agent solve the piano-movers puzzle that ants solve?
 
 ## 1. The ants
 

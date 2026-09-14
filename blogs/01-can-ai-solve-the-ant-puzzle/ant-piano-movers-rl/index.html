@@ -3,9 +3,9 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Can an AI agent solve the puzzle that ants solve?</title>
+    <title>Can an AI agent solve the piano-movers puzzle that ants solve?</title>
     <meta name="description" content="Teaching a reinforcement-learning agent the piano-movers puzzle that crazy ants solve collectively — the failures, the cheats, and the BFS teacher that finally worked.">
-    <meta property="og:title" content="Can an AI agent solve the puzzle that ants solve?">
+    <meta property="og:title" content="Can an AI agent solve the piano-movers puzzle that ants solve?">
     <meta property="og:description" content="A weekend project: an RL agent learns to thread a T-shaped load through two narrow slits — the same maneuver ants perform in the PNAS piano-movers experiment.">
     <meta property="og:type" content="article">
     <meta property="og:image" content="https://rezakakooee.github.io/ant-piano-movers-rl/assets/task_vocabulary.png">
@@ -23,6 +23,7 @@
           <a href="#env">Environment</a>
           <a href="#exp1">Experiments</a>
           <a href="#result">Result</a>
+          <a href="#addendum">After the post</a>
           <a href="#code">Code</a>
           <a href="#cite">Cite</a>
         </nav>
@@ -33,14 +34,14 @@
       <div class="wrap">
         <section class="hero">
           <p class="eyebrow">Reinforcement learning &middot; piano-movers problem</p>
-          <h1>Can an AI agent solve the puzzle that ants solve?</h1>
+          <h1>Can an AI agent solve the piano-movers puzzle that ants solve?</h1>
           <p class="lede">
             A group of ants carries a T-shaped load through two narrow slits, with no
             leader and no plan. I rebuilt their maze as a gym environment and spent a
             few weekends trying to teach one agent the same maneuver. It failed for a
             long time. This is what finally worked.
           </p>
-          <p class="byline">Reza Kakooee &middot; side project</p>
+          <p class="byline">Reza Kakooee</p>
           <div class="actions">
             <a class="button button--primary" href="https://github.com/RezaKakooee/ant-piano-movers-rl">Code on GitHub</a>
             <a class="button" href="#try">Try the sandbox</a>
@@ -487,6 +488,210 @@ slit 2 exited  first by :  small head  25 / 25</code></pre>
           </p>
         </section>
 
+        <!-- addendum ---------------------------------------------------- -->
+        <section class="section" id="addendum">
+          <h2>Addendum: what happened after this post</h2>
+          <p>
+            This post ended with one agent, one start, one goal. Three things happened
+            next, before the <a href="https://rezakakooee.github.io/ant-swarm-rl/">swarm post</a>.
+            They are the bridge between the two, so here they are, in the order they
+            happened.
+          </p>
+
+          <h3>A. Any start, any goal</h3>
+          <p>
+            The agent above knew exactly one start pose and one goal. I wanted one that
+            can begin anywhere in the start room, at any angle, and reach a goal drawn
+            anywhere in the goal room.
+          </p>
+          <p>
+            First I measured how far the fixed-goal agent already got, with no extra
+            training:
+          </p>
+          <table>
+            <thead><tr><th>setting</th><th>success</th></tr></thead>
+            <tbody>
+              <tr><td>its own task: fixed start, fixed goal</td><td>100%</td></tr>
+              <tr><td>random start, fixed goal</td><td>62%</td></tr>
+              <tr><td>fixed start, random goal</td><td>12%</td></tr>
+              <tr><td>random start and random goal</td><td>6%</td></tr>
+            </tbody>
+          </table>
+          <p>
+            Random starts were half solved. Random goals were the real problem. And the
+            reason was simple once I found it: during training the goal never moved, so
+            the agent never learned to read the goal input. An input that never changes
+            is an input the network ignores.
+          </p>
+          <p>
+            The obvious fix is to make a BFS map for every goal. I did that for five
+            goals, trained on them one after the other, and got 100% on the two goals the
+            agent practised first and 0% on the other three. It had memorised, not
+            learned.
+          </p>
+          <figure>
+            <img src="assets/any_start_any_goal.png" alt="The maze with the random start zone, the random goal box, and the two legs of the reward.">
+            <figcaption>Random start, random goal, and the reward in two legs: one map to the exit point, then a straight line to the goal.</figcaption>
+          </figure>
+          <p>
+            The fix that worked is a reward in two legs. The hard part of the maze, the
+            two slits and the turn, is the same for every goal. So the first leg uses one
+            map, flooded from a fixed exit point just past the second slit. Once the whole
+            load is through the second slit, the second leg takes over: plain
+            straight-line distance to the actual goal, which is safe in an open room. One
+            map, learned once, for every goal.
+          </p>
+          <p>
+            With this reward, and goals drawn from the whole box so there was nothing to
+            memorise, the agent reached <strong>99 to 100%</strong> on random starts and
+            random goals. The curriculum from section 08 turned out to be optional here:
+            the same run with no curriculum at all also reached 100%, at about 910,000
+            steps. What made the task learnable from scratch was the map in the reward,
+            not the stages.
+          </p>
+
+          <h3>B. Trying to drop the teacher</h3>
+          <p>
+            The map is a strong crutch. It knows the whole maze. I wanted to know how far
+            an agent gets with no map at all: sparse reward, a point only when the load
+            reaches the goal, random start and random goal, no curriculum. Plain SAC had
+            already failed at this in section 07. So I tried the four standard tools for
+            hard-exploration tasks, each as a switch in the same trainer.
+          </p>
+          <figure>
+            <img src="assets/four_methods.png" alt="Four sketches: hindsight goal relabelling, an exploration bonus for new poses, exploration noise held for many steps, and Go-Explore's return-then-explore loop.">
+            <figcaption>The four tools, in one picture each.</figcaption>
+          </figure>
+          <ul>
+            <li>
+              <strong>Hindsight experience replay (HER).</strong> The agent almost never
+              reaches the goal, so it almost never sees a reward. HER cheats in a useful
+              way. After a failed episode, it pretends that wherever the load ended
+              <em>was</em> the goal, and stores the episode again with that goal. Now
+              every episode teaches something: how to get to that place. The hope is
+              that &ldquo;how to get to places&rdquo; adds up to &ldquo;how to get to the
+              goal&rdquo;.
+            </li>
+            <li>
+              <strong>An exploration bonus.</strong> A small extra reward for every pose
+              of the load the agent has not seen often. Poses it visits all the time pay
+              nothing. A new pose pays well. This pushes the agent toward the unknown
+              even when the real reward is silent.
+            </li>
+            <li>
+              <strong>gSDE, slower exploration noise.</strong> Ordinary RL adds a fresh
+              random wobble to every action. That is fine for small steps, but a wobble
+              that changes every step averages out to nothing over a long push. gSDE
+              picks one random direction and keeps it for 64 steps, so the agent tries
+              real, sustained moves.
+            </li>
+            <li>
+              <strong>Go-Explore.</strong> The strongest of the four. Keep an archive of
+              every pose the load has reached, with the exact actions that got there.
+              Pick a promising pose, replay those actions to return to it exactly, then
+              push randomly from there and add anything new to the archive. It never
+              forgets a place it has been.
+            </li>
+          </ul>
+          <figure>
+            <img src="assets/frontier_wall.png" alt="The maze with the region reached by every method shaded: everything up to x = 0.900, in front of the second slit.">
+            <figcaption>Where every method stopped. The shaded region is everything ever reached without the map.</figcaption>
+          </figure>
+          <p>
+            None of them crossed the second slit. The two Go-Explore runs got furthest,
+            to x = 0.900, just inside the corridor. The archive grew to 14,000 poses and
+            that frontier did not move by a millimetre. The HER runs barely left the
+            first room: they never got a crossing to relabel. The bonus ran out of new
+            poses on the near side. gSDE brought the load to the slit and no further.
+          </p>
+          <table>
+            <thead><tr><th>method</th><th>steps</th><th>success</th></tr></thead>
+            <tbody>
+              <tr><td>HER</td><td>1.7M</td><td>0%</td></tr>
+              <tr><td>HER + exploration bonus</td><td>1.6M</td><td>0%</td></tr>
+              <tr><td>HER + gSDE</td><td>2.0M</td><td>0%</td></tr>
+              <tr><td>all three</td><td>1.4M</td><td>0%</td></tr>
+              <tr><td>Go-Explore, two grid sizes</td><td>3.0M and 4.9M</td><td>0 crossings</td></tr>
+            </tbody>
+          </table>
+          <div class="callout callout--fail">
+            <p>
+              The second slit needs the load in the right place <em>and</em> at the right
+              angle at the same time, and only a thin set of poses does both. Random
+              pushes never produce even one crossing, so none of these methods ever gets
+              the one example it needs. More samples do not help. A signal that says
+              &ldquo;turn away from the goal now&rdquo; is what is missing, and none of
+              these tools provides it.
+            </p>
+          </div>
+
+          <h3>C. A teacher from demonstrations, and the bug that hid it</h3>
+          <p>
+            If the map cannot be dropped, maybe it can be hidden. Use it once, to make
+            demonstrations, then train a policy that copies them and never sees the map
+            again.
+          </p>
+          <p>
+            A planner that walks the load downhill on the map solved 34,777 episodes,
+            random starts and random goals, every step recorded. Then behaviour cloning:
+            a network that takes the load&rsquo;s pose, speed and the goal, and outputs
+            the planner&rsquo;s action. No reward, no map, no curriculum.
+          </p>
+          <p>
+            It scored 0%. Not once or twice: for eleven days, in every variant I could
+            think of. More data, five million transitions instead of half a million.
+            Action chunks. A frame stack. Noise on the actions. A discrete torque head.
+            DAgger. Each one 0 to 5%. The load reached the first slit and stopped.
+          </p>
+          <p>
+            The cause was one line of code. The observation module stored the goal by
+            reference when the environment was built. Every script that changed the goal
+            later replaced the array instead of writing into it. So the reward saw the
+            new goal, the success check saw the new goal, the renders showed the new goal.
+            The observation kept the first one. For all 4.9 million stored transitions,
+            the goal input was the same two numbers.
+          </p>
+          <figure>
+            <img src="assets/frozen_goal.png" alt="The goal box with the real goals of the demonstrations scattered across it, and the single frozen goal the network saw.">
+            <figcaption>What the network was told, against what was true.</figcaption>
+          </figure>
+          <p>
+            Every policy in those eleven days was asked to reach a moving goal while being
+            told that the goal never moves. Of course it stopped at the first slit: from
+            there on, the route depends on the goal.
+          </p>
+          <p>
+            Two things I keep from this. First, the one experiment that ever moved the
+            number, replacing the goal input with a direction from the map, took success
+            from 0% to 84%. I read it as &ldquo;the policy wants waypoints&rdquo;. It was
+            telling me &ldquo;the goal input is broken&rdquo;. When one input swap changes
+            everything, check the input. Second, my evaluation had its own bug: it took
+            the first N episodes of the dataset, and the first 534 episodes all share one
+            start pose. Every success rate I had quoted was measured on one start.
+          </p>
+          <p>
+            With both fixed, and nothing else changed, the same behaviour cloning scored
+            <strong>88 to 95%</strong> on fresh random starts and goals. Then I put RL on
+            top, two ways. Let it change the whole policy: it collapsed to 0%, saved only
+            by keeping the best checkpoint. Let it add only a small bounded correction to
+            the frozen cloned policy: <strong>97%</strong>.
+          </p>
+          <figure>
+            <img src="assets/il_numbers.png" alt="Bar chart: copying with the bug 0 percent, copying fixed 88 to 95 percent, RL with full freedom 0 percent, RL as a bounded correction 97 percent.">
+          </figure>
+          <figure>
+            <video src="assets/residual_success.mp4" autoplay loop muted playsinline></video>
+            <figcaption>The cloned policy with the bounded RL correction, on a fresh episode. It never saw the map.</figcaption>
+          </figure>
+          <div class="callout callout--result">
+            <p>
+              <span class="result-number">97% without the map</span>
+              This policy, trained without ever seeing the map, is the single-agent brain
+              that the swarm post starts from.
+            </p>
+          </div>
+        </section>
+
         <!-- code ------------------------------------------------------- -->
         <section class="section" id="code">
           <h2>Come and play with it</h2>
@@ -518,37 +723,28 @@ slit 2 exited  first by :  small head  25 / 25</code></pre>
           </p>
 <pre><code>@misc{kakooee2026antswarm,
   author       = {Kakooee, Reza},
-  title        = {Can an {AI} Agent Solve the Puzzle That Ants Solve?},
+  title        = {Can an {AI} Agent Solve the Piano-Movers Puzzle That Ants Solve?},
   year         = {2026},
   howpublished = {\url{https://rezakakooee.github.io/ant-piano-movers-rl/}},
   note         = {Blog post. Code: \url{https://github.com/RezaKakooee/ant-piano-movers-rl}}
 }</code></pre>
-          <p>Or in plain text:</p>
-          <p class="mono" style="font-size:.9rem;color:var(--muted)">
-            Kakooee, R. (2026). <em>Can an AI agent solve the puzzle that ants solve?</em>
-            Blog post. https://rezakakooee.github.io/ant-piano-movers-rl/
-          </p>
+        </section>
+
+        <!-- references ------------------------------------------------- -->
+        <section class="section" id="references">
+          <h2>References</h2>
           <p>
-            Please also cite the experiment this work reproduces:
+            Dreyer, T., Haluts, A., Korman, A., Gov, N., Fonio, E., &amp; Feinerman, O.
+            (2025). &ldquo;Comparing cooperative geometric puzzle solving in ants versus
+            humans.&rdquo; <em>Proceedings of the National Academy of Sciences</em>.
+            <a href="https://doi.org/10.1073/pnas.2414274121">https://doi.org/10.1073/pnas.2414274121</a>
           </p>
-<pre><code>@article{dreyer2025ants,
-  author  = {Dreyer, Tabea and Haluts, Amir and Korman, Amos and
-             Gov, Nir and Fonio, Ehud and Feinerman, Ofer},
-  title   = {Comparing cooperative geometric puzzle solving in ants versus humans},
-  journal = {Proceedings of the National Academy of Sciences},
-  year    = {2025},
-  doi     = {10.1073/pnas.2414274121}
-}</code></pre>
         </section>
       </div>
     </main>
 
     <footer class="footer">
       <div class="inner">
-        <p>
-          Reference: Dreyer et&nbsp;al., &ldquo;Comparing cooperative geometric puzzle
-          solving in ants versus humans&rdquo;, PNAS 2025.
-        </p>
         <div>
           <a href="https://github.com/RezaKakooee/ant-piano-movers-rl">GitHub</a>
           <a href="https://x.com/rezakakooee">X</a>

@@ -1,4 +1,4 @@
-# Can an AI agent solve the puzzle that ants solve?
+# Can an AI agent solve the piano-movers puzzle that ants solve?
 
 Project page for the single-agent piano-movers experiment: an RL agent learns to
 thread a T-shaped load through two narrow slits — the maneuver crazy ants perform

@@ -9,7 +9,7 @@ It is a gym (Gymnasium) recreation of the cooperative-transport experiment in
 human groups — move a T-shaped load through a three-room maze.
 
 📖 **Part one, one agent:** https://rezakakooee.github.io/ant-piano-movers-rl/
-🐜 **Part two, the swarm:** https://rezakakooee.github.io/ant-swarm-rl/
+🐜 **Part two, many agents:** https://rezakakooee.github.io/ant-swarm-rl/
 🕹️ **Try the maze in your browser:** https://rezakakooee.github.io/ant-piano-movers-rl/sandbox/
 
 ---
@@ -105,7 +105,7 @@ The code is MIT licensed, so you are free to use it. If it helps your research,
 ```bibtex
 @misc{kakooee2026antswarm,
   author       = {Kakooee, Reza},
-  title        = {Can an {AI} Agent Solve the Puzzle That Ants Solve?},
+  title        = {Can an {AI} Agent Solve the Piano-Movers Puzzle That Ants Solve?},
   year         = {2026},
   howpublished = {\url{https://rezakakooee.github.io/ant-piano-movers-rl/}},
   note         = {Code: \url{https://github.com/RezaKakooee/ant-piano-movers-rl}}
