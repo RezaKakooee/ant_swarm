@@ -21,6 +21,9 @@ and adds the two other standard ingredients.
                             single ant, as one env step does for 5 ants (§12)
   G  periodic checkpoints   --ckpt-every 1000000: ckpt_<steps>.pt with actor,
                             critic and optimiser; --resume <ckpt> continues
+  H  independent actors     --independent-actors: ant i has its OWN network with
+                            its own random initialisation (no parameter sharing);
+                            each network then sees one row per env step (§14)
 
 Step counting: `steps` = worker steps = env steps per env summed over workers.
 With --envs-per-worker 1 this is the env-step count of every earlier run. With
@@ -68,14 +71,14 @@ STUDENT_OBS = 27
 class Actor(nn.Module):
     """Shared per-ant actor: own row -> tanh-squashed Gaussian over [angle, force]."""
 
-    def __init__(self, obs_dim, hidden=256, init_log_std=-1.0, act_dim=None):
+    def __init__(self, obs_dim, hidden=256, init_log_std=-1.0, act_dim=None, act_fn=nn.ReLU):
         super().__init__()
         act_dim = int(act_dim or ACT_DIM)
         # the §9 student's body (3x256 ReLU): in the differential test it distilled to
         # 35% where the 2x256 tanh body reached 20% (and 5% with the same optimiser)
-        self.body = nn.Sequential(nn.Linear(obs_dim, hidden), nn.ReLU(),
-                                  nn.Linear(hidden, hidden), nn.ReLU(),
-                                  nn.Linear(hidden, hidden), nn.ReLU())
+        self.body = nn.Sequential(nn.Linear(obs_dim, hidden), act_fn(),
+                                  nn.Linear(hidden, hidden), act_fn(),
+                                  nn.Linear(hidden, hidden), act_fn())
         self.mu = nn.Linear(hidden, act_dim)
         self.log_std = nn.Parameter(torch.full((act_dim,), float(init_log_std)))
 
@@ -95,6 +98,50 @@ class Actor(nn.Module):
         mu, d = self.dist(obs); act = torch.tanh(raw)
         logp = d.log_prob(raw).sum(-1) - torch.log1p(-act.pow(2) + 1e-6).sum(-1)
         return logp, d.entropy().sum(-1), torch.tanh(mu)
+
+
+# Small architectural diversity between independent ants (§14): ant i takes
+# variant i % 5. Widths within +-6% of 256; all activations are ReLU-like.
+ACTOR_VARIANTS = [(256, nn.ReLU), (248, nn.GELU), (264, nn.SiLU), (240, nn.ELU),
+                  (272, lambda: nn.LeakyReLU(0.1))]
+
+
+class MultiActor(nn.Module):
+    """One Actor per ant, no shared weights (chapter 04 §14). Ant i's rows go to
+    network i. Rows in a batch are addressed by `aid` (ant index per row).
+    Each network has its own random initialisation and a slightly different
+    width and activation (ACTOR_VARIANTS)."""
+
+    def __init__(self, n, obs_dim, hidden=256, init_log_std=-1.0, act_dim=None):
+        super().__init__()
+        self.actors = nn.ModuleList([Actor(obs_dim, ACTOR_VARIANTS[i % len(ACTOR_VARIANTS)][0], init_log_std, act_dim,
+                                           act_fn=ACTOR_VARIANTS[i % len(ACTOR_VARIANTS)][1]) for i in range(n)])
+        self.n = int(n)
+
+    def describe(self):
+        return ", ".join(f"ant{i}: {ACTOR_VARIANTS[i % 5][0]}x3 {a.body[1].__class__.__name__} {sum(q.numel() for q in a.parameters())} params"
+                         for i, a in enumerate(self.actors))
+
+    @property
+    def log_std(self):
+        return torch.stack([a.log_std for a in self.actors])
+
+    def act(self, obs, deterministic=False):
+        """obs: (n, D), row i belongs to ant i."""
+        outs = [a.act(obs[i:i + 1], deterministic) for i, a in enumerate(self.actors)]
+        return tuple(torch.cat([o[j] for o in outs]) for j in range(3))
+
+    def evaluate(self, obs, raw, aid):
+        logp = torch.empty(len(obs), device=obs.device); ent = torch.empty_like(logp); mu = torch.empty_like(raw)
+        for i, a in enumerate(self.actors):
+            m = aid == i
+            if m.any():
+                lp, en, mt = a.evaluate(obs[m], raw[m]); logp[m], ent[m], mu[m] = lp, en, mt
+        return logp, ent, mu
+
+
+def make_actor(obs_dim, act_dim, n, independent, init_log_std=-1.0):
+    return MultiActor(n, obs_dim, init_log_std=init_log_std, act_dim=act_dim) if independent else Actor(obs_dim, init_log_std=init_log_std, act_dim=act_dim)
 
 
 class CentralCritic(nn.Module):
@@ -138,7 +185,7 @@ def to_env_action(a):
 _W = {}
 
 
-def _w_init(cfg_path, layout, seed, student_path, student_vel_div, history=1, sanity=None, envs_per_worker=1):
+def _w_init(cfg_path, layout, seed, student_path, student_vel_div, history=1, sanity=None, envs_per_worker=1, independent=False):
     torch.set_num_threads(1)
     # Pool passes the SAME initargs to every worker. Without this line all 30 workers
     # ran the same seed -> identical envs, spawns and (with deterministic collection)
@@ -148,7 +195,7 @@ def _w_init(cfg_path, layout, seed, student_path, student_vel_div, history=1, sa
     from multiprocessing import current_process
     ident = current_process()._identity[0] if current_process()._identity else 0
     seed = int(seed) + 7919 * int(ident)
-    _W["hist_k"] = int(history); _W["sanity"] = sanity
+    _W["hist_k"] = int(history); _W["sanity"] = sanity; _W["independent"] = bool(independent)
     cfg = load_config(cfg_path).copy()
     if layout is not None:
         cfg.ants.n = len(layout); cfg.ants.offsets = [list(map(float, p)) for p in layout]
@@ -179,7 +226,7 @@ def _w_rollout(args):
     state_dict, steps, max_steps, drive = (list(args) + ["actor"])[:4]
     n, obs_dim, K = _W["n"], _W["obs_dim"], _W["hist_k"]
     act_dim = int(_W["env"].action_space.shape[-1])
-    actor = Actor(obs_dim * K, act_dim=act_dim); actor.load_state_dict(state_dict); actor.eval()
+    actor = make_actor(obs_dim * K, act_dim, n, _W["independent"]); actor.load_state_dict(state_dict); actor.eval()
     return [_w_rollout_env(env, actor, n, obs_dim, K, steps, max_steps, drive) for env in _W["envs"]]
 
 
@@ -299,6 +346,8 @@ def main():
                    help="independent envs stepped by each worker per worker step (§12: 5 gives a single ant the swarm's row count)")
     p.add_argument("--ckpt-every", type=int, default=1_000_000, help="save ckpt_<steps>.pt (actor+critic+optimiser) every this many steps; 0 = off")
     p.add_argument("--resume", default=None, help="continue from a ckpt_*.pt: actor, critic, optimiser, step count and eval history are restored")
+    p.add_argument("--independent-actors", action="store_true",
+                   help="one network per ant, own initialisation, no parameter sharing (§14); single stage only")
     p.add_argument("--eval-every", type=int, default=250_000)
     p.add_argument("--eval-episodes", type=int, default=30)
     p.add_argument("--heldout-episodes", type=int, default=100)
@@ -314,7 +363,9 @@ def main():
     dev = torch.device(resolve_device(args.device)); torch.manual_seed(args.seed)
     cfg = load_config(args.config)
     K = int(args.history)
-    tag = "marl_v2" + ("_warm" if args.warm_start else "") + ("_cont" if args.init_actor else "") + (f"_h{K}" if K > 1 else "") + (f"_stages{args.stages.replace(',', '-')}" if args.stages else "")
+    tag = "marl_v2" + ("_warm" if args.warm_start else "") + ("_cont" if args.init_actor else "") + (f"_h{K}" if K > 1 else "") + (f"_stages{args.stages.replace(',', '-')}" if args.stages else "") + ("_ind" if args.independent_actors else "")
+    if args.independent_actors and (args.stages or args.warm_start):
+        raise SystemExit("--independent-actors: no --stages (the team size is fixed) and no --warm-start (distil() fits one shared net)")
     resume = torch.load(args.resume, map_location=dev, weights_only=True) if args.resume else None
     if resume is not None and args.stages:
         raise SystemExit("--resume supports single-stage runs only")
@@ -335,9 +386,12 @@ def main():
     global ACT_DIM
     ACT_DIM = int(probe.action_space.shape[-1]); probe.close()
     logger.info(f"MARL v2: obs_dim={obs_dim} act_dim={ACT_DIM} stages={[(n, len(l) if l else None) for n, l in layouts]} workers={args.workers} "
-                f"envs/worker={args.envs_per_worker} warm={'yes' if args.warm_start else 'no'} device={dev}")
+                f"envs/worker={args.envs_per_worker} independent={args.independent_actors} warm={'yes' if args.warm_start else 'no'} device={dev}")
 
-    actor = Actor(obs_dim * K, init_log_std=(-2.0 if args.warm_start else args.init_log_std), act_dim=ACT_DIM).to(dev)
+    actor = make_actor(obs_dim * K, ACT_DIM, layouts[-1][0], args.independent_actors,
+                       init_log_std=(-2.0 if args.warm_start else args.init_log_std)).to(dev)
+    if args.independent_actors:
+        logger.info(f"independent actors: {actor.describe()}")
     if args.init_actor:
         blob = torch.load(args.init_actor, map_location=dev, weights_only=True)
         actor.load_state_dict(blob["actor"])
@@ -354,7 +408,7 @@ def main():
     for si, (n, layout) in enumerate(layouts):
         last_stage = si == len(layouts) - 1
         pool = ctx.Pool(args.workers, initializer=_w_init,
-                        initargs=(args.config, layout, args.seed + 1000 * si + steps_done // 1000, args.warm_start, float(n), K, args.sanity_reward, E))
+                        initargs=(args.config, layout, args.seed + 1000 * si + steps_done // 1000, args.warm_start, float(n), K, args.sanity_reward, E, args.independent_actors))
         critic = CentralCritic(n, obs_dim).to(dev)
         opt = torch.optim.Adam([{"params": actor.parameters(), "lr": args.lr},
                                 {"params": critic.parameters(), "lr": args.lr}])
@@ -404,6 +458,7 @@ def main():
             RET = torch.as_tensor(np.concatenate(RETs), device=dev); G = torch.as_tensor(np.concatenate(Gs), device=dev)
             S = torch.as_tensor(np.concatenate(Ss), device=dev) if Ss else None
             ADV = (ADV - ADV.mean()) / (ADV.std() + 1e-8)
+            AID = torch.arange(len(O), device=dev) % n      # ant index of every actor row
             # worker steps: env steps per env, summed over workers (= env steps when E == 1)
             steps_done += sum(len(pt["R"]) for pt in parts) // E
             # ----- PPO
@@ -412,7 +467,8 @@ def main():
                 perm_a, perm_c = torch.randperm(N_a, device=dev), torch.randperm(N_c, device=dev)
                 for k in range(0, N_a, args.minibatch):
                     i = perm_a[k:k + args.minibatch]
-                    logp, ent, mu_t = actor.evaluate(O[i], A[i]); ratio = (logp - LP[i]).exp()
+                    logp, ent, mu_t = (actor.evaluate(O[i], A[i], AID[i]) if args.independent_actors else actor.evaluate(O[i], A[i]))
+                    ratio = (logp - LP[i]).exp()
                     pg = -torch.min(ratio * ADV[i], ratio.clamp(1 - args.clip, 1 + args.clip) * ADV[i]).mean()
                     loss = pg - args.ent_coef * ent.mean()
                     if S is not None and args.anchor_coef > 0:
@@ -434,7 +490,7 @@ def main():
                 tr.log({"eval/success_rate_pct": sr, "eval/mean_distance_m": md}, step=steps_done)
                 logger.info(f"  eval n={n}: SR={sr:.1f}%  mean={md:.4f}")
                 if n == final_n and sr > best:
-                    best = sr; torch.save({"actor": actor.state_dict(), "obs_dim": obs_dim, "n": n, "layout": layout, "steps": steps_done}, out / "best.pt")
+                    best = sr; torch.save({"actor": actor.state_dict(), "obs_dim": obs_dim, "n": n, "layout": layout, "steps": steps_done, "independent": args.independent_actors}, out / "best.pt")
                     logger.info(f"  best so far ({sr:.1f}%) -> best.pt")
                 if not last_stage:
                     promote_hits = promote_hits + 1 if sr >= args.stage_sr else 0
@@ -443,12 +499,12 @@ def main():
             if steps_done >= next_ckpt:
                 next_ckpt += args.ckpt_every
                 torch.save({"actor": actor.state_dict(), "critic": critic.state_dict(), "opt": opt.state_dict(),
-                            "obs_dim": obs_dim, "n": n, "layout": layout, "steps": steps_done, "best": best, "history": history,
+                            "obs_dim": obs_dim, "n": n, "layout": layout, "steps": steps_done, "best": best, "history": history, "independent": args.independent_actors,
                             "envs_per_worker": E}, out / f"ckpt_{steps_done:09d}.pt")
                 logger.info(f"  checkpoint -> ckpt_{steps_done:09d}.pt")
         pool.close(); pool.join()
 
-    torch.save({"actor": actor.state_dict(), "obs_dim": obs_dim, "n": final_n, "layout": layouts[-1][1], "steps": steps_done}, out / "final.pt")
+    torch.save({"actor": actor.state_dict(), "obs_dim": obs_dim, "n": final_n, "layout": layouts[-1][1], "steps": steps_done, "independent": args.independent_actors}, out / "final.pt")
     if (out / "best.pt").exists():
         actor.load_state_dict(torch.load(out / "best.pt", map_location=dev, weights_only=True)["actor"])
     ho_sr, ho_md = evaluate(actor, args.config, layouts[-1][1], int(args.heldout_episodes), args.seed + 90_000, K=K)

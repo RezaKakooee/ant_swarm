@@ -1,11 +1,15 @@
 # 04 — Multi-agent: the physics is fine, the sum is not
 
-Period: 2026-09-05 → 2026-09-06.
+Period: 2026-09-05 → 2026-09-14 (project closed with this chapter).
 Question: chapter 03 solved the task with one ant. Can N ants, each seeing only
 its own observation and deciding alone, do the same?
-Answer: **not yet. Five decentralised attempts all scored 0%. But the obstacle
-was measured, and it is not the one anyone expected: per-ant accuracy is fine,
-and the summed torque is not.**
+Answer: **yes, with pure decentralised RL and the geodesic reward.** Five
+ants 96-98% and ten ants 94% held-out, each ant reading only its own row,
+even with one separate network per ant (§11-§14). The first five attempts
+(§3-§5) all scored 0%; the obstacle was measured (the summed torque, §4) and
+then removed by a centralised critic, contact-point velocity and distinct
+worker streams (§10). One ant with the same data budget reaches 100% (§12).
+Without the geodesic field nothing learns (§15). The final summary is §16.
 
 Evidence used for every number:
 
@@ -924,13 +928,274 @@ Smoke tests before submission: E = 1, E = 5, resume from a checkpoint, and a
 5-ant run with E = 2. Each ran under `timeout`. Each was checked for exit 124
 and for a traceback. All four passed.
 
+## 13. Ten ants, same recipe
+
+The question after §12: does the recipe keep working when the team grows?
+§4 measured that summed torque errors grow with N. Ten ants is the first test
+of that with pure RL.
+
+| item | swarm 5 (242213) | swarm 10 (242469) |
+|---|---|---|
+| config | `marl_v2_5ants.yaml` | `marl_v2_10ants.yaml`, only `ants:` differs |
+| layout | 2 big cap, 2 small cap, 1 stem centre | 4 big cap, 4 small cap, 2 stem (x = ±0.08) |
+| rows per env step | 5 | 10 |
+| actor rows at 20M steps | 100M | 200M |
+| seed, workers, history, steps, evals | 31000, 30, 4, 20M, every 250k | same |
+| critic input | 5 × 29 | 10 × 29 |
+| wall time | 3 h 23 min | 13 h 37 min (40 s per update) |
+
+Job 242469, https://wandb.ai/kakooee/ant_swarm/runs/17ox4c9t. Held-out eval
+of every 1M-step checkpoint: job 242470, `heldout_200.json` in the run folder.
+Submitted with `ops/fair_submit.sh configs/rl/marl_v2_10ants.yaml marl_v2_h4_10ants`.
+
+### 13.1 Result
+
+Held-out, 200 episodes (seeds 60000+ and 70000+), every 1M steps:
+
+| steps | 1M | 2M | 3M | 4M | 5M | 6M | 7M | 8M | 9M | 10M |
+|---|---|---|---|---|---|---|---|---|---|---|
+| swarm 10 | 38% | 84% | 88% | 91% | **94%** | 83% | 88% | 92% | 88% | 88% |
+
+| steps | 11M | 12M | 13M | 14M | 15M | 16M | 17M | 18M | 19M | 20M |
+|---|---|---|---|---|---|---|---|---|---|---|
+| swarm 10 | **94%** | 90% | 76% | 86% | 83% | 86% | 86% | 86% | 83% | **80%** |
+
+The best-by-eval checkpoint (3.8M steps) scores 92%. The final policy scores
+80%. The three finals on the same 200 episodes:
+
+| policy | rows per step | actor rows | seeds 60000+ | seeds 70000+ | mean |
+|---|---|---|---|---|---|
+| single ant, 5 envs per worker (242283) | 5 | 100M | 100% | 100% | **100%** |
+| swarm, 5 ants (242213) | 5 | 100M | 94% | 99% | **96%** |
+| swarm, 10 ants (242469), best.pt at 3.8M | 10 | 38M | 91% | 93% | 92% |
+| swarm, 10 ants (242469), final.pt | 10 | 200M | 79% | 80% | **80%** |
+
+![5 vs 10 ants](figures/ch04_s13_10ants_curve.png)
+
+*30-episode curves. Left: by step (equal update count). Right: by actor rows.*
+
+### 13.2 Reading
+
+1. **Ten ants start as fast as five, per step.** 84% held-out at 2M steps,
+   91% at 4M. The 5-ant swarm's best checkpoint (3M) scored 93%. Per actor
+   row the 10-ant swarm is slower: it needs twice the rows for the same step.
+2. **Then it gets worse.** The peak is 94% (5M and 11M). From 13M on it is
+   76-86%, and the final policy is 80%. The 5-ant swarm ended at 96%, and the
+   single ant at 100%. This is not evaluation noise. The training return fell
+   too, from 1.63 at 4M steps to 1.19-1.26 at 20M. The stochastic rollout
+   success fell from 0.97 to 0.71-0.75.
+3. **What changed inside the policy during the decline.** The mean push
+   magnitude fell from 0.42 to 0.25 (the 5-ant swarm's rose to 0.55). The
+   log-std fell to -4.1 (5-ant: -3.15). So the ten ants push more softly and
+   almost deterministically, and the load loses success. With ten pushers
+   each ant's share of the wrench is half of what it was with five. §4
+   showed that the *sum* of small per-ant errors grows with N. A near-
+   deterministic policy cannot explore its way out of that.
+4. **The number to quote for ten ants:** 92% held-out (best checkpoint, 3.8M
+   steps), 80% at the end of training. Ten ants are not better than five.
+   They learn as fast and then lose 12-16 points.
+
+### 13.3 Open points
+
+- One seed. The decline could be seed-specific. §11 showed seed variance
+  of 30% vs 96% for the same setup.
+- Row-matched control not run: the 5-ant swarm with `--envs-per-worker 2`
+  would have the same 200M rows.
+- The decline looks like the PPO collapse of §10 (87% → 0% without an
+  anchor), but slower. Untested levers: an entropy floor, a lower learning
+  rate after the peak, or stopping at the best checkpoint (which is what
+  `best.pt` does).
+- Why the mean force drops with N is not understood. Candidates: the load
+  moves faster with ten pushers, so smaller pushes are enough for translation
+  and the policy loses the larger pushes needed for turning.
+
+## 14. Independent networks: one brain per ant
+
+All swarms so far shared one actor network. Here each ant gets its own
+network and its own random initialisation. The shapes differ a little: width
+240-272 and activation ReLU, GELU, SiLU, ELU or LeakyReLU. Ant i takes
+variant i mod 5. No weights are shared. The critic stays centralised. Switch:
+`train_marl_v2.py --independent-actors`. Same recipe and seed as §11 and §13.
+
+| run | job | W&B | wall time |
+|---|---|---|---|
+| 5 independent | 242601 | https://wandb.ai/kakooee/ant_swarm/runs/gcdhpkkt | 4 h 03 min |
+| 10 independent | 242603 | https://wandb.ai/kakooee/ant_swarm/runs/bh8mzgt6 | 16 h 47 min |
+
+Each independent network sees one row per env step. The shared network saw
+5 or 10. So per network the data is 20M rows, like the single ant of §11.
+
+### 14.1 Result
+
+Held-out, 200 episodes (seeds 60000+ and 70000+), every 1M steps:
+
+| steps | 2M | 3M | 4M | 5M | 6M | 7M | 8M | 9M | 10M | 13M | 16M | 20M |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 5 independent | 0% | 27% | 66% | 71% | 84% | 91% | 96% | 95% | 96% | 99% | 98% | **98%** |
+| 10 independent | 20% | 46% | 58% | 63% | 68% | 80% | 84% | 97% | 95% | 92% | 96% | **94%** |
+
+The four swarms side by side, final policy, same 200 episodes:
+
+| swarm | actor | rows per network at 20M | seeds 60000+ | seeds 70000+ | mean | best ckpt |
+|---|---|---|---|---|---|---|
+| 5 ants (242213) | shared | 100M | 94% | 99% | **96%** | 93% (3M) |
+| 5 ants (242601) | independent | 20M | 99% | 98% | **98%** | 85% (6.8M) |
+| 10 ants (242469) | shared | 200M | 79% | 80% | **80%** | 92% (3.8M) |
+| 10 ants (242603) | independent | 20M | 94% | 95% | **94%** | 97% (9M) |
+
+![shared vs independent](figures/ch04_s14_independent_curve.png)
+
+*30-episode curves. Left: by step. Right: by actor rows (all rows of all
+networks). Blue and green: 5 ants. Red and purple: 10 ants.*
+
+### 14.2 Reading
+
+1. **Independent ants learn slower per step, then reach the same level.**
+   The 5-ant swarm first passed 90% on its 30-episode eval at 5.8M steps
+   (shared: 1.75M). The 10-ant swarm at 3.8M (shared: 2.75M). Each network
+   has one fifth or one tenth of the shared network's data. That fits §12.
+2. **No late decline with ten independent ants.** The shared 10-ant swarm
+   peaked at 94% and ended at 80% (§13). The independent one holds 92-98%
+   held-out from 9M to 20M and ends at 94%. Its mean push stays at 0.46-0.50
+   (shared: fell to 0.25) and its log-std at -2.9 (shared: -4.1).
+3. **Five different brains cooperate as well as one shared brain.** Different
+   init, width and activation did not hurt: 98% against 96%. Coordination
+   here does not need weight sharing. Each ant reads the load's motion from
+   its own row and that is enough.
+4. **The best-by-eval checkpoint misleads again.** For 5 independent ants
+   `best.pt` is the first 100% eval (6.8M steps) and scores 85% held-out.
+   `final.pt` scores 98%. Use the final policy, or the held-out table.
+
+**Number to quote:** 5 independent ants 98%, 10 independent ants 94%, both
+held-out at 20M steps. One seed each.
+
+## 15. No map at all: Euclidean reward, PPO and SAC
+
+Every successful RL run in this project used the geodesic field. That is a
+BFS distance-to-goal over (x, y, angle) of the maze. It is used only in the
+reward and only at training time. Chapter 02 found that without it, one SAC agent never
+passed the second slit. This section repeats that test with the strongest
+recipe we have: 5 independent ants, 30 workers, 20M steps.
+
+Config `marl_v2_5ants_nomap.yaml`: `reward_mode: shaped`, which is Euclidean
+progress toward the goal plus the success bonus. `reward_progress_coef: 1.0`
+puts the shaping per episode on the scale of the geodesic reward. No
+`geodesic_field`. Everything else as in §14.
+
+| run | job | W&B | steps | wall time |
+|---|---|---|---|---|
+| PPO, 5 independent ants | 242707 | https://wandb.ai/kakooee/ant_swarm/runs/c3q0urrz | 20M | 4 h 06 min |
+| SAC, 5 independent ants, two replay buffers | 242710 | https://wandb.ai/kakooee/ant_swarm/runs/93h8spsf | 19.8M (24 h limit) | 24 h |
+
+The SAC trainer is new: `scripts/rl/train_masac.py`. Independent actors,
+two centralised twin-Q critics, automatic entropy. Two replay buffers: a
+uniform ring of every transition, and a ring of transitions from successful
+episodes. The second one supplies 25% of every minibatch once it holds one batch.
+0.05 gradient updates per env step, batch 512 (about 1M updates).
+
+### 15.1 Result
+
+| run | 30-episode evals | held-out (200 episodes) | mean distance to goal |
+|---|---|---|---|
+| PPO, no map | 0% on all 80 | 0% at every 1M-step checkpoint | 0.42-0.46 m from 3M steps on, flat |
+| SAC, no map | 0% on all 79 | 0% at 19M and at `best.pt` | 0.62-0.70 m, flat |
+| PPO, with map (§14) | 100% from 8M | 98% | 0.05 m |
+
+The SAC success buffer never received one episode in 19.8M steps. The PPO
+run's episode return stayed at 0.00. In both runs the load reaches the maze
+and stops in front of the slit. There, Euclidean progress toward the goal
+means pushing into the wall.
+
+### 15.2 Reading
+
+1. **Chapter 02's verdict holds under a much stronger recipe.** Five ants,
+   thirty worker streams, independent networks, 20M steps, PPO or SAC. Not
+   one crossing of the second slit. The missing piece is the signal that
+   says "turn and go around", not the number of samples or the algorithm.
+2. **Five ants do not explore their way through.** §12 suggested that five
+   pushes at five points move the load in more useful ways. They do, with the
+   field. Without it the extra motion never becomes a crossing.
+3. **The success buffer cannot help when there is no success.** It is a
+   device for keeping rare successes. Here the rare event never happened.
+4. **SAC detail worth keeping.** With per-step rewards of about 0.01 the
+   entropy bonus at alpha = 1.0 was 100 times the reward. Q inflated to about
+   40-60 in the first 300k steps, alpha fell to 0.000, and Q decayed back over
+   the next 2M steps. `--init-alpha 0.01` and `--reward-scale` were added for
+   any repeat. This transient did not cause the 0%: the PPO run has no such
+   term and scored 0% too.
+
+**Verdict.** Without the geodesic field this task is not learned from zero
+by anything tried so far, single ant or swarm, on-policy or off-policy. The
+field remains the one teacher this project needs. It is used only in the
+reward at training time, and the policies never see it.
+
+## 16. Closing summary: what this project found
+
+The project is closed here (2026-09-14). The numbers below are the ones to
+quote. All are held-out success on 200 fresh episodes (seeds 60000-60099 and
+70000-70099) at the end of training, unless marked. One seed each.
+
+| policy | chapter | held-out |
+|---|---|---|
+| one ant, behaviour cloning on 34,777 demos | 03 | 88-95% |
+| one ant, BC + residual RL | 03 | 97% |
+| one ant, pure RL, geodesic reward, 20M rows | 04 §11 | 88% |
+| one ant, pure RL, geodesic reward, 100M rows (5 envs per worker) | 04 §12 | **100%** |
+| 5 ants, distilled from the split oracle, no RL | 04 §9 | 91% |
+| 5 ants, distilled then PPO with anchor | 04 §10 | 84% |
+| 5 ants, pure RL, shared network | 04 §11 | 96% |
+| 5 ants, pure RL, one network per ant | 04 §14 | **98%** |
+| 10 ants, pure RL, shared network | 04 §13 | 80% (peak 94%) |
+| 10 ants, pure RL, one network per ant | 04 §14 | 94% |
+| 5 ants, pure RL, no geodesic field, PPO or SAC | 04 §15 | 0% |
+| any swarm on an attachment layout it was not trained on | 04 §8 | 0% |
+
+Six findings:
+
+1. **The task is solved for one ant and for swarms of 5 and 10.** Each ant
+   sees only its own 29-D row. No map, no waypoints and no ant count at test
+   time. No curriculum over the maze.
+2. **Decentralised RL failed five times, then worked.** The failures were not
+   the algorithm. They were one worker stream copied thirty times, a critic
+   that saw one ant, and an observation without the load's local motion.
+   Each was measured before it was fixed (§4, §10).
+3. **The swarm's speed advantage is data, not cooperation.** A shared network
+   gets 5 rows per env step. Give one ant the same rows and it learns just as
+   fast at the end, and ends higher (100%, §12).
+4. **Weight sharing is optional.** One network per ant, with different init,
+   width and activation, reaches 98% (5 ants) and 94% (10 ants). It learns
+   slower per step and does not collapse late, unlike the shared 10-ant
+   network (§13-§14).
+5. **The geodesic field is the one teacher that matters.** With it, every
+   recipe works. Without it, nothing crosses the second slit: single ant
+   (chapter 02), five ants, PPO, SAC with a success buffer (§15). The field
+   is used only in the reward at training time.
+6. **Evaluation discipline changed several conclusions.** Best-of-N on one
+   30-episode block turned 98% into 91%, 100% into 84% and 100% into 85%.
+   Every number above is from checkpoints scored on seeds training never saw.
+
+What was not solved:
+
+- Transfer to an unseen attachment layout: 0% for every swarm policy (§8).
+- Learning without the geodesic field (§15, chapter 02).
+- Seed variance: every arm is one seed. One earlier swarm seed gave 30%
+  where another gave 96% (§10-§11).
+
+Where everything is: run folders and checkpoints in
+`ops/handoff_next_chat.md`; W&B project `kakooee/ant_swarm`; trainers
+`scripts/rl/train_marl_v2.py` and `scripts/rl/train_masac.py`; held-out
+scoring `scripts/rl/eval_marl_v2.py`; curves `scripts/tools/samples_curve.py`;
+submit `ops/fair_submit.sh`.
+
 ## Remaining limitations
 
 - **Decentralised policies now exist at three levels (§9, §10).** Distilled
   from the oracle: 91% held-out. Distilled then PPO: 84%. Pure decentralised RL
   from zero: 96% (5 ants) and 88% (1 ant) under one recipe, §11; the single
-  ant with the swarm's row budget reaches 100% (§12.2); an earlier swarm
-  seed gave 30%. Unseen attachment layouts: still 0%. Everything before it was 0%, and the
+  ant with the swarm's row budget reaches 100% (§12.2); ten ants peak at 94%
+  and end at 80% (§13); with one network per ant, 5 ants 98% and 10 ants
+  94% (§14); without the geodesic field, 0% for PPO and SAC (§15); an earlier
+  swarm seed gave 30%. Unseen attachment layouts: still 0%. Everything before it was 0%, and the
   formula-based base (§8) needs an N the ant cannot obtain. The only working
   controller is centralised: one brain computing a wrench and dividing it.
 - **Not tried:** the residual and critic parts of §7 (blocked: the base needs N, §8);
@@ -942,10 +1207,19 @@ and for a traceback. All four passed.
   of the stem, so its arm is zero and it can produce no torque at all. It is
   excluded from every push-only test.
 
-## Exact state right now (2026-09-10)
+## Exact state right now (2026-09-14)
 
-- **Running:** nothing. Jobs 242283 (single ant ×5, §12.2) and 242284 (its
-  held-out table) completed on 2026-09-10.
+- **Running:** nothing. §12: jobs 242283/242284 (2026-09-10). §13: 242469/242470
+  (2026-09-11). §14: 242601/242602 and 242603/242604 (2026-09-12). §15:
+  242707/242708 and 242710 (SAC, hit the 24 h limit at 19.8M steps; its eval
+  job 242711 failed for lack of `results.json`, scored by hand: 0%).
+- **§14 runs:** `ant__20260911_1512__242601__marl_v2_h4_ind` (98%),
+  `ant__20260911_1512__242603__marl_v2_h4_10ants_ind` (94%).
+- **§15 runs:** `ant__20260912_0111__242707__marl_v2_h4_ind_nomap` (0%),
+  `ant__20260912_0120__242710__masac_h4_ind_nomap` (0%).
+- **§13 run:** `ant__20260911_0016__242469__marl_v2_h4_10ants` with
+  `ckpt_*.pt` every 1M steps, `best.pt` (92% held-out), `final.pt` (80%),
+  `heldout_200.json`.
 - **§12 run:** `ant__20260910_1013__242283__marl_v2_h4_x5` with `ckpt_*.pt`
   every 1M steps, `best.pt`, `final.pt` (100% held-out), `heldout_200.json`.
 - **MARL v2 runs:** `ant__20260908_0327__241788__marl_v2_warm_h4` (distilled+PPO,

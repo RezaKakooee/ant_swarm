@@ -23,7 +23,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 for extra in (PROJECT_ROOT, PROJECT_ROOT / "scripts" / "rl"):
     if str(extra) not in sys.path:
         sys.path.insert(0, str(extra))
-from train_marl_v2 import Actor, evaluate  # noqa: E402
+from train_marl_v2 import make_actor, evaluate  # noqa: E402
 
 
 def _run_args(ckpt: Path) -> dict:
@@ -41,9 +41,11 @@ def score_checkpoint(ckpt: Path, config: str | None, history: int | None, seeds,
     history = history or ra.get("history") or 1
     if config is None:
         raise SystemExit(f"{ckpt}: no --config and no results.json next to it")
-    act_dim = int(blob["actor"]["mu.weight"].shape[0])
+    independent = bool(blob.get("independent", False))
+    mu_key = "actors.0.mu.weight" if independent else "mu.weight"
+    act_dim = int(blob["actor"][mu_key].shape[0])
     obs_dim = int(blob["obs_dim"])
-    actor = Actor(obs_dim * int(history), act_dim=act_dim)
+    actor = make_actor(obs_dim * int(history), act_dim, int(blob.get("n", 1)), independent)
     actor.load_state_dict(blob["actor"]); actor.eval()
     row = {"ckpt": str(ckpt), "steps": blob.get("steps"), "n": blob.get("n"), "history": int(history)}
     srs = []

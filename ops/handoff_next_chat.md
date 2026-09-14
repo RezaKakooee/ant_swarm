@@ -1,6 +1,8 @@
-# Handoff — where we are (2026-09-10)
+# Handoff — project closed (2026-09-14)
 
-Short state file for the next chat. Simple English.
+**The project was closed on 2026-09-14.** The final summary with every number
+to quote is chapter 04 §16 (`docs/project_journey/04_*.md`). This file says
+where everything is, in case the project is reopened. Simple English.
 Full stories: `docs/project_journey/01`–`04`. Diagnoses: `CLAUDE_FINDINGS.md`,
 `CODEX_FINDINGS.md`. The original problem statement (now partly outdated):
 `CLAUDE_HANDOFF.md`. Previous version of this file: `handoff_next_chat_2026-08-25.md`.
@@ -22,6 +24,15 @@ Full stories: `docs/project_journey/01`–`04`. Diagnoses: `CLAUDE_FINDINGS.md`,
    (job 242283), above the swarm's 96%. So the 88% was a sample budget. The
    swarm is still faster early: 93% vs 80% held-out at 3M steps with equal
    rows. Quote: one ant 100%, swarm 96%, at equal rows.
+   **Ten ants (§13): 92% at the best checkpoint (3.8M steps), 80% at the
+   end.** As fast as five ants per step, then a slow decline: mean push
+   falls to 0.25, log-std to -4.1, training return drops too. Config
+   `marl_v2_10ants.yaml`, job 242469.
+   **One network per ant (§14): 5 ants 98%, 10 ants 94%** held-out. Slower
+   per step than a shared network, same end level, and no late decline for
+   10 ants. Switch `--independent-actors`.
+   **No geodesic field (§15): 0%** for PPO and for SAC with a success
+   buffer, 5 independent ants, 20M steps. Chapter 02's verdict holds.
 5. **Unseen attachment layouts: 0%** for every swarm policy. Not addressed.
 
 ## Constraints the user holds
@@ -39,6 +50,9 @@ time (demos, the oracle) has been accepted; say so when you use one.
 | contact-point velocity block (obs 27→29) | `env.observe_contact_velocity: true` |
 | device | `device: cpu|cuda|auto` in fine-tune configs; `cuda` fails loudly if absent |
 | MARL v2 arms | `scripts/rl/train_marl_v2.py --warm-start <single-ant BC .pt> | --stages 2,3,5 | --init-actor <pt> | --sanity-reward push` |
+| one network per ant, own init, small width/activation diversity | `train_marl_v2.py --independent-actors` (§14); also `train_masac.py` (default on) |
+| multi-agent SAC with success replay buffer | `scripts/rl/train_masac.py --config <yaml> --utd 0.05 --batch 512 --init-alpha 0.01` (§15) |
+| no geodesic field, Euclidean reward | `configs/rl/marl_v2_5ants_nomap.yaml` (§15) |
 | envs per worker (5 actor rows per worker step for one ant) | `train_marl_v2.py --envs-per-worker 5` (§12); `steps` = worker steps |
 | periodic checkpoints and resume | `train_marl_v2.py --ckpt-every 1000000` (default on) writes `ckpt_<steps>.pt`; `--resume <ckpt>` continues in the same folder |
 | held-out scoring of any MARL v2 `.pt` | `scripts/rl/eval_marl_v2.py <run>/final.pt --history 4` (seeds 60000+, 70000+, 100 each) |
@@ -56,6 +70,9 @@ time (demos, the oracle) has been accepted; say so when you use one.
 | swarm, distilled + PPO, 84% | `storage_local/ant__20260908_0327__241788__marl_v2_warm_h4/best.pt` |
 | swarm, pure RL, 96% | `storage_local/ant__20260909_2337__242213__marl_v2_h4/final.pt` |
 | single ant, pure RL (same recipe), 88% | `storage_local/ant__20260909_2334__242212__marl_v2_h4/final.pt` (note 2334, not 2337) |
+| swarm, 10 ants, 92% best / 80% final held-out (§13) | `storage_local/ant__20260911_0016__242469__marl_v2_h4_10ants/best.pt` (3.8M steps), `final.pt`; `heldout_200.json` has every checkpoint |
+| swarm, 5 independent networks, **98%** held-out (§14) | `storage_local/ant__20260911_1512__242601__marl_v2_h4_ind/final.pt` (`best.pt` is only 85%) |
+| swarm, 10 independent networks, 94% held-out (§14) | `storage_local/ant__20260911_1512__242603__marl_v2_h4_10ants_ind/final.pt` (`best.pt` at 9M: 97%) |
 | single ant, 5 envs per worker, **100%** held-out (§12.2) | `storage_local/ant__20260910_1013__242283__marl_v2_h4_x5/final.pt`; `ckpt_*.pt` every 1M steps; `heldout_200.json` has every checkpoint |
 
 Caches: `storage_local/cache/replay_full_goals_v2.npz` is the corrected 4.91M
@@ -71,7 +88,11 @@ not use.
   cache is the opposite (209 s on a GPU).
 - `sbatch ops/sb_train.sh <script.py> "" <args>` takes an explicit script path.
   The §11/§12 MARL runs used a plain `sbatch --wrap` on `-p performance -c 32
-  --mem=48G` (no GPU); `ops/fair_x5_submit.sh` is the exact form, and
+  --mem=48G` (no GPU). `ops/fair_submit.sh <config> <tag> [args]` submits one
+  such run plus a held-out eval job of every checkpoint after it.
+  `FAIR_SCRIPT=scripts/rl/train_masac.py` picks the SAC trainer; `FAIR_MEM=40G`
+  lowers the memory request (shared-actor runs use ~10 GB, the 5-envs-per-worker
+  run used 33 GB). The SAC run needs the full 24 h for 20M steps at utd 0.05.
   `sacct -j <id> --format=SubmitLine%300` recovers any past submit line.
 - Smoke-test every patched script before `sbatch`, and make the guard fail on a
   timeout (exit 124) as well as on a traceback. Both have bitten.
@@ -85,14 +106,28 @@ project `.env` files were aligned on 2026-09-07. The pasted key should be
 rotated. `scripts/tools/wandb_backfill.py` pushes a finished run's
 `results.json`. Runs: `https://wandb.ai/kakooee/ant_swarm` (pure RL:
 `runs/v5edvbtn`; distilled swarm: `runs/pju6bigj`; §11 single `runs/uote3o0p`,
-swarm `runs/cn1wjwl9`; §12 single ×5: `runs/dini8iz1`).
+swarm `runs/cn1wjwl9`; §12 single ×5: `runs/dini8iz1`; §13 ten ants:
+`runs/17ox4c9t`; §14 independent 5/10: `runs/gcdhpkkt`, `runs/bh8mzgt6`;
+§15 no map PPO/SAC: `runs/c3q0urrz`, `runs/93h8spsf`).
 
-## Next steps (in rough order)
+## If the project is reopened
 
-0. **Why is the swarm faster early?** §12.2 left this open: at 3M steps and
-   equal rows and updates, swarm 93% vs single ×5 80%. Candidate: five pushes
-   at five points give torque and translation at once. A test: the swarm run
-   with periodic checkpoints (now default) and a second seed of each arm.
+Three things are open. Everything else is done or was shown not to work.
+
+1. **Unseen attachment layouts** (0% for every swarm policy, chapter 04 §8).
+2. **Learning without the geodesic field** (0%, chapter 04 §15 and chapter
+   02). Needs a new idea for the signal, not another algorithm.
+3. **Seeds.** Every number is one seed. Run 3 seeds of the three headline
+   runs before publishing: single ×5 (100%), 5 shared (96%), 5 independent (98%).
+
+## Next steps as they stood before closing (kept for reference)
+
+0. **Why do ten shared-network ants decline after 5M steps (§13)?** Peak
+   94%, final 80%. Ten independent networks do not decline (94% at 20M, §14),
+   so weight sharing is part of it. Levers not tried on the shared run:
+   entropy floor, lower learning rate after the peak, a second seed. Also
+   open from §12.2: why the 5-ant swarm is faster early than the single ant
+   at equal rows and updates (93% vs 80% at 3M steps).
 1. **Unseen layouts** — every swarm policy is 0% off its training layout. The
    fix needs each ant's force to depend on where the *others* sit, which its
    row does not contain (chapter 04 §8). Untested: training across layouts
@@ -126,6 +161,14 @@ swarm `runs/cn1wjwl9`; §12 single ×5: `runs/dini8iz1`).
 - A run folder's timestamp is the *start* minute, not the submit minute: the
   §11 single run is `ant__20260909_2334__242212__...`, the swarm `..._2337__242213__...`.
   Find folders by job id (`ls -d storage_local/ant__*__<jobid>__*`), not by time.
+- `best.pt` is the first checkpoint to hit the top 30-episode score and is
+  often worse held-out than `final.pt` (85% vs 98% in §14). Quote the held-out
+  table, never `best.pt` alone.
+- The held-out eval job needs `results.json` to find the config. A run that
+  hits the time limit has none; `fair_submit.sh` now passes `--config`.
+- Without the geodesic field, nothing learns the slit (§15, chapter 02). Do
+  not spend more nodes on "pure" reward variants without a new idea for the
+  signal.
 - With `--envs-per-worker E`, `steps` on the W&B x-axis are worker steps. Env
   steps are `E × steps` (logged as `samples/env_steps`). Compare runs with
   different E on `samples/actor_rows`, not on `steps`.
