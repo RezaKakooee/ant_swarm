@@ -8,6 +8,7 @@ sections). To evaluate instead of train, set `run.eval: true` and
 """
 from __future__ import annotations
 
+import os
 import sys
 from collections import deque
 from pathlib import Path
@@ -94,7 +95,7 @@ class EpisodeMetricsCallback(BaseCallback):
         return True
 
 WANDB_PROJECT = "ant_swarm"
-WANDB_ENTITY  = "kakooee"
+WANDB_ENTITY  = os.environ.get("ANT_SWARM_WANDB_ENTITY") or os.environ.get("WANDB_ENTITY") or None
 
 
 def _make_run_name(n_ants: int) -> str:

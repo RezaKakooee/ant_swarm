@@ -16,6 +16,7 @@ Found solutions are saved as success JSONs under
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -40,7 +41,7 @@ def main():
     if bool(getattr(g, "wandb", True)):
         try:
             import wandb
-            wandb_run = wandb.init(project="ant_swarm", entity="kakooee", name=run_dir.name,
+            wandb_run = wandb.init(project="ant_swarm", entity=os.environ.get("ANT_SWARM_WANDB_ENTITY") or os.environ.get("WANDB_ENTITY") or None, name=run_dir.name,
                                    group="go_explore",
                                    tags=["go_explore"])
             logger.info(f"W&B run: {wandb_run.url}")

@@ -17,7 +17,7 @@ accuracy. That is a much weaker requirement.
 Team reward: every ant receives the same env reward. The critic is per-ant on
 the same row, so the whole thing stays decentralised at execution.
 
-    sbatch ... --wrap "python scripts/rl/train_marl.py --ants 4 --timesteps 2000000"
+    python scripts/rl/train_marl.py --ants 4 --timesteps 2000000
 """
 from __future__ import annotations
 

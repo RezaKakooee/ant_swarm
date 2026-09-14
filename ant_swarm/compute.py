@@ -6,10 +6,9 @@ built for CUDA 13.0, which needs driver >= 610. Nodes on 575 report
 runs on CPU without saying so -- two fine-tuning runs were lost that way before
 anyone noticed.
 
-Working nodes (driver 610.57.04):  calc-g-002 (RTX 2080 Ti), calc-g-003 (TITAN RTX)
-Broken nodes  (driver 575.57.08):  calc-g-004, calc-g-008, calc-g-010
-
-    sbatch -M cluster -p performance -w calc-g-002 --gres=gpu:1 ...
+On a cluster with mixed drivers, pin the job to a node whose driver is new
+enough, and set ``ANT_SWARM_GPU_NODES`` (comma-separated) so the error message
+can name one.
 
 Default is ``cpu``: the environment is single-threaded NumPy, so for RL the
 env stepping dominates and a GPU buys little. Use ``cuda`` for supervised
@@ -17,7 +16,9 @@ training on the cached datasets, where it is worth roughly 10x.
 """
 from __future__ import annotations
 
-GPU_NODES = ("calc-g-002", "calc-g-003")
+import os
+
+GPU_NODES = tuple(n for n in os.environ.get("ANT_SWARM_GPU_NODES", "").split(",") if n) or ("<a node with a recent driver>",)
 
 
 def resolve_device(name: str = "cpu", *, allow_fallback: bool = False) -> str:

@@ -56,6 +56,23 @@ FORBIDDEN = [
     r"\bscancel\b",
     r"/home/[a-z]",
     r"#SBATCH",
+    # the current cluster and account (2026-09)
+    r"/home2/",
+    r"/mnt/nas",
+    r"clusterdata",
+    r"calc-[gmc]-\d",
+    r"calc-cpu",
+    r"\.netrc",
+    r"rkakooee",
+    r"gen-xr",
+    r"@fhnw",
+    r"@gmail",
+    r"WANDB_ENTITY=",
+    r"wandb\.ai/",
+    r"/tmp/claude",
+    r"conda/envs/",
+    r"\bsacct\b",
+    r"\bsinfo\b",
 ]
 # harmless matches (generic env vars any SLURM user would set)
 ALLOWED_EXCEPTIONS = [r"SLURM_JOB_ID", r"slurm/cluster-agnostic"]

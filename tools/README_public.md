@@ -8,7 +8,8 @@ It is a gym (Gymnasium) recreation of the cooperative-transport experiment in
 **Dreyer et al., *PNAS* 2025**, where longhorn crazy ants — and, for comparison,
 human groups — move a T-shaped load through a three-room maze.
 
-📖 **Read the write-up:** https://rezakakooee.github.io/ant-piano-movers-rl/
+📖 **Part one, one agent:** https://rezakakooee.github.io/ant-piano-movers-rl/
+🐜 **Part two, the swarm:** https://rezakakooee.github.io/ant-swarm-rl/
 🕹️ **Try the maze in your browser:** https://rezakakooee.github.io/ant-piano-movers-rl/sandbox/
 
 ---
@@ -65,12 +66,31 @@ python scripts/rl/train_sac.py --config-name pnas_kin_geo_v2 run.wandb=false
 Everything is configured in `configs/` (OmegaConf + Hydra), so any value can be
 overridden on the command line: `sac.timesteps=5e6`, `env.reward_mode=sparse`.
 
+### Many ants (part two)
+
+```bash
+# five ants, one shared network, PPO with a centralised critic (MAPPO)
+python scripts/rl/train_marl_v2.py --config configs/rl/marl_v2_5ants.yaml --workers 8 --history 4
+
+# one network per ant, with a little diversity in width and activation
+python scripts/rl/train_marl_v2.py --config configs/rl/marl_v2_10ants.yaml --workers 8 --history 4 --independent-actors
+
+# score any checkpoint on 200 fresh episodes
+python scripts/rl/eval_marl_v2.py storage_local/<run>/final.pt --history 4
+
+# multi-agent SAC with a second replay pool for successful episodes
+python scripts/rl/train_masac.py --config configs/rl/marl_v2_5ants_nomap.yaml --workers 8 --history 4
+```
+
+`--workers` is the number of parallel copies of the maze; the runs in the post
+used 30 on a 32-core node. Each ant sees only its own observation row.
+
 ## Layout
 
 ```
 ant_swarm/     the environment package (RL-library agnostic)
 configs/       yaml configs: rl / il / heuristic
-scripts/rl/    SAC & PPO training, geodesic field generator, evaluation
+scripts/rl/    SAC & PPO training, multi-agent trainers (train_marl_v2, train_masac), evaluation
 scripts/il/    replay and render saved success trajectories
 interactive/   browser sandbox (no install needed)
 blogs/         the write-up and its project page
@@ -102,5 +122,6 @@ with attribution.
 ## Contributing
 
 Issues and pull requests are welcome — especially if you find a better method,
-or make the agent cheat in a way I did not think of. Multi-agent transport
-(`ants.n >= 2`) is the open frontier.
+or make the agent cheat in a way I did not think of. Two things are open: a
+swarm that transfers to a new set of attachment points, and learning the
+maze without the geodesic teacher.

@@ -783,7 +783,7 @@ evaluations nearest that row count. Script: `scripts/tools/samples_curve.py`.
 | 50M | — | 96% (10.0M) |
 | 100M | — | 97% (19.5M) |
 
-![success vs actor rows](figures/ch04_s12_samples_curve.png)
+<img src="figures/ch04_s12_samples_curve.png" alt="success vs actor rows" width="720">
 
 *Left: the W&B x-axis (worker steps = PPO updates × 15,360). Right: x = ants
 × envs per worker × steps. Dots are single evaluations, lines a 5-point
@@ -970,7 +970,7 @@ The best-by-eval checkpoint (3.8M steps) scores 92%. The final policy scores
 | swarm, 10 ants (242469), best.pt at 3.8M | 10 | 38M | 91% | 93% | 92% |
 | swarm, 10 ants (242469), final.pt | 10 | 200M | 79% | 80% | **80%** |
 
-![5 vs 10 ants](figures/ch04_s13_10ants_curve.png)
+<img src="figures/ch04_s13_10ants_curve.png" alt="5 vs 10 ants" width="720">
 
 *30-episode curves. Left: by step (equal update count). Right: by actor rows.*
 
@@ -1043,7 +1043,7 @@ The four swarms side by side, final policy, same 200 episodes:
 | 10 ants (242469) | shared | 200M | 79% | 80% | **80%** | 92% (3.8M) |
 | 10 ants (242603) | independent | 20M | 94% | 95% | **94%** | 97% (9M) |
 
-![shared vs independent](figures/ch04_s14_independent_curve.png)
+<img src="figures/ch04_s14_independent_curve.png" alt="shared vs independent" width="720">
 
 *30-episode curves. Left: by step. Right: by actor rows (all rows of all
 networks). Blue and green: 5 ants. Red and purple: 10 ants.*

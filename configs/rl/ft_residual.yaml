@@ -122,5 +122,5 @@ finetune:
 
   # cpu | cuda | auto. Default cpu: the env is single-threaded NumPy,
   # so RL is env-bound and a GPU buys little. 'cuda' fails loudly if the
-  # node's driver is too old -- submit with -w calc-g-002 or calc-g-003.
+  # node's driver is too old -- pin the job to a node with a recent driver.
   device: cpu

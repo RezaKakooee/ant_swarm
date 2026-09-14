@@ -4,8 +4,8 @@ The mode ('residual' or 'gaussian') and every hyper-parameter come from the
 config's ``finetune:`` block, so the two arms differ only by config. See
 ``scripts/rl/bc_finetune.py`` for what each mode does.
 
-    sbatch ops/sb_train.sh scripts/rl/finetune_bc.py configs/rl/ft_residual.yaml
-    sbatch ops/sb_train.sh scripts/rl/finetune_bc.py configs/rl/ft_gaussian.yaml
+    python scripts/rl/finetune_bc.py --config configs/rl/ft_residual.yaml
+    python scripts/rl/finetune_bc.py --config configs/rl/ft_gaussian.yaml
 
 No geodesic field, no curriculum, no new demonstrations.
 """

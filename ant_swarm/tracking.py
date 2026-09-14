@@ -17,9 +17,8 @@ from loguru import logger
 import os
 
 WANDB_PROJECT = os.environ.get("ANT_SWARM_WANDB_PROJECT", "ant_swarm")
-# None = the entity the API key belongs to. The key on this cluster is user
-# `rkakooee` (entities: rkakooee, gen-xr); the `kakooee` entity hardcoded in
-# scripts/rl/train_sac.py is refused with "permission denied".
+# None = the entity the API key belongs to. Set ANT_SWARM_WANDB_ENTITY (or
+# WANDB_ENTITY) if your key has access to more than one entity.
 WANDB_ENTITY = os.environ.get("ANT_SWARM_WANDB_ENTITY") or None
 
 

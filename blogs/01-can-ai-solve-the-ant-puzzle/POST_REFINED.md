@@ -32,7 +32,7 @@ However, I started with a single agent, which should be easier for RL.
 The environment is a small 2-D rigid-body simulator in pure NumPy,
 with exact rectangle collisions.
 
-![The task and its words](assets/task_vocabulary.png)
+<img src="assets/task_vocabulary.png" alt="The task and its words" width="720">
 
 A single agent either moves the load directly (*kinematic*) or pushes it with real
 forces and momentum (*dynamic*, the mode closest to the ants).
@@ -124,7 +124,7 @@ It worked. The agent passed every stage and reached the real narrow width.
 
 Then I looked at what it actually does:
 
-![The small-head cheat](assets/cheat_smallhead.gif)
+<img src="assets/cheat_smallhead.gif" alt="The small-head cheat" width="720">
 
 It never does the maneuver. It slides the load through sideways, **small head
 first**. The small head fits everywhere, so that is what the agent learned in
@@ -163,7 +163,7 @@ It failed again:
 | -------------------------- | ------ | ------- |
 | PPO dynamic, shaped reward | 14.06M | 0%      |
 
-![PPO after 14 million steps](assets/policy_14000000.gif)
+<img src="assets/policy_14000000.gif" alt="PPO after 14 million steps" width="720">
 
 After 14 million steps it has learned exactly one thing: drive at the goal. It
 pushes the load against the wall and waits there until the episode ends.
@@ -193,7 +193,7 @@ The maze never changes here — only where the episode begins:
 
 | 1. start in the goal room                                                                                       | 2. start in the corridor                                                                                         | 3. start at the real start                                                                                       |
 | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| ![a](assets/1_first__step1403_len403.gif) | ![b](assets/2_early__step150542_len31.gif) | ![c](assets/5_final__step421814_len79.gif) |
+| <img src="assets/1_first__step1403_len403.gif" alt="a" width="720"> | <img src="assets/2_early__step150542_len31.gif" alt="b" width="720"> | <img src="assets/5_final__step421814_len79.gif" alt="c" width="720"> |
 | easy — even a clumsy policy stumbles into the goal                                                             | the hard part: the turn between the two slits                                                                    | the whole task, from the real start                                                                              |
 
 Then I ran SAC, and it was successful.
@@ -203,12 +203,12 @@ But when I looked closely, it was still cheating.
 My first thought was that my arena was to blame — I had drawn it by hand, not
 from the paper. So I rebuilt the maze with the real numbers:
 
-![The maze, with the real numbers](assets/maze_dimensions.png)
+<img src="assets/maze_dimensions.png" alt="The maze, with the real numbers" width="720">
 
 It did not help. In the new maze the agent went in small head first again — all
 20 solutions I checked.
 
-![Still cheating in the accurate maze](assets/cheat_accurate_maze.gif)
+<img src="assets/cheat_accurate_maze.gif" alt="Still cheating in the accurate maze" width="720">
 
 Two things were wrong. My slit is still a bit too generous — in the paper it is
 0.81 of the big head, in mine 0.86 — so this shortcut stays open. And my
@@ -256,7 +256,7 @@ reward points around the walls, not through them.
 path from the start to the goal. I picked 16 poses along that path and used them
 as the curriculum stages.
 
-![The 16 curriculum stages](assets/curriculum_anchors.png)
+<img src="assets/curriculum_anchors.png" alt="The 16 curriculum stages" width="720">
 
 Read the colours from dark blue to dark red. Stage 0 is almost at the goal, and
 stage 15 is the real start. In other words, the picture shows the solution
@@ -285,7 +285,7 @@ Then it worked. **100% success, learned in 247,519 steps** — about two hours o
 one machine, and 56 times fewer steps than the 14-million-step run that learned
 nothing.
 
-![The solved task](assets/eval_ep01_len153_ret1.76.gif)
+<img src="assets/eval_ep01_len153_ret1.76.gif" alt="The solved task" width="720">
 
 But the number I actually cared about was not the success rate. It was *how* it
 solves the maze. So I replayed the last 25 solutions and checked which head goes

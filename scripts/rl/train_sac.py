@@ -15,6 +15,7 @@ starts a new reward phase with only the learned actor.
 """
 from __future__ import annotations
 
+import os
 import sys
 from collections import deque
 from pathlib import Path
@@ -43,7 +44,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STORAGE_DIR  = PROJECT_ROOT / "storage_local"
 
 WANDB_PROJECT = "ant_swarm"
-WANDB_ENTITY  = "kakooee"
+WANDB_ENTITY  = os.environ.get("ANT_SWARM_WANDB_ENTITY") or os.environ.get("WANDB_ENTITY") or None
 
 # Defaults if config.yaml lacks the `run:` / `sac:` sections.
 from scripts.rl.sac_bc import SAC_BC

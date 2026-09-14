@@ -1,0 +1,679 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Can a swarm of AI ants solve the puzzle?</title>
+    <meta name="description" content="Five and ten AI ants, each seeing only its own small view, learn to carry a T-shaped load through two narrow slits — after five failures, one measured obstacle, and a surprise about why the swarm looked smarter.">
+    <meta property="og:title" content="Can a swarm of AI ants solve the puzzle?">
+    <meta property="og:description" content="Part two of the ant piano-movers project: many agents on one load, no leader, no messages. What failed, what was measured, what finally worked.">
+    <meta property="og:type" content="article">
+    <meta property="og:image" content="https://rezakakooee.github.io/ant-swarm-rl/assets/ant_layouts.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="inner">
+        <a class="mark" href="#top">Ant&nbsp;Swarm</a>
+        <nav aria-label="Page sections">
+          <a href="#recap">Where we left off</a>
+          <a href="#failures">Failures</a>
+          <a href="#fixes">Fixes</a>
+          <a href="#fair">One vs five</a>
+          <a href="#teacher">The teacher</a>
+          <a href="#code">Code</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="top">
+      <div class="wrap">
+        <section class="hero">
+          <p class="eyebrow">Multi-agent reinforcement learning &middot; part two</p>
+          <h1>Can a swarm of AI ants solve the puzzle?</h1>
+          <p class="lede">
+            In part one, a single agent learned to carry a T-shaped load through two
+            narrow slits. Real ants do it as a group, with no leader and no plan. So I
+            put five, then ten, agents on the load, gave each one only its own small
+            view, and tried to make them learn it together. Five attempts scored zero.
+            This is what I measured, what I fixed, and what surprised me.
+          </p>
+          <p class="byline">Reza Kakooee &middot; side project, part two</p>
+          <div class="actions">
+            <a class="button button--primary" href="https://github.com/RezaKakooee/ant-piano-movers-rl">Code on GitHub</a>
+            <a class="button" href="https://rezakakooee.github.io/ant-piano-movers-rl/">Read part one</a>
+            <a class="button" href="#cite">Cite this post</a>
+          </div>
+        </section>
+
+        <!-- 1 ---------------------------------------------------------- -->
+        <section class="section" id="recap">
+          <h2><span class="num">01</span>Where we left off</h2>
+          <p>
+            In the <a href="https://rezakakooee.github.io/ant-piano-movers-rl/">first post</a>
+            one agent learned to carry a T-shaped load through two narrow slits. It needed
+            a teacher: a map of the maze, flooded backwards from the goal with BFS, that
+            told the agent which way is really forward. With that, it solved the maze
+            every time, big head first, exactly like the ants.
+          </p>
+          <p>
+            But the ants do not do it alone. Dozens of them hold the load at the same
+            time. No ant is in charge. No ant sees the whole picture. Each one feels only
+            the piece of the load under its own feet. And the research behind the video
+            (Dreyer et&nbsp;al., PNAS 2025) found something strange: ants get
+            <strong>better</strong> in bigger groups. People get worse.
+          </p>
+          <p>So the next question was obvious. Can a group of AI agents do the same?</p>
+          <figure>
+            <video src="assets/swarm5_success.mp4" autoplay loop muted playsinline></video>
+            <figcaption>Five ants (the white dots) carry the load through the maze. Each one sees only its own small view.</figcaption>
+          </figure>
+          <p>
+            This is where the post ends up. Let me tell you how it got there. It took
+            five failures first.
+          </p>
+        </section>
+
+        <!-- 2 ---------------------------------------------------------- -->
+        <section class="section" id="setup">
+          <h2><span class="num">02</span>What changes with many ants</h2>
+          <p>
+            Everything about the maze stays the same. What changes is who is holding the
+            load.
+          </p>
+          <figure>
+            <img src="assets/ant_layouts.png" alt="The T-shaped load with one, five and ten attachment points marked.">
+            <figcaption>Where the ants hold the load. Big head on the left, small head on the right.</figcaption>
+          </figure>
+          <p>
+            Each ant holds one fixed point on the T. Every step, every ant chooses a
+            direction and a strength for its push. That is all an ant can do. It cannot
+            turn the load. Only the whole group can turn it, by pushing at different
+            points in different directions.
+          </p>
+          <p>
+            The one ant in part one was special. It sat in the middle of the load and had
+            an extra &ldquo;spin&rdquo; action, because a push from the middle can never
+            turn anything. The swarm has no spin. Every turn has to come from teamwork.
+          </p>
+          <p>
+            <strong>What each ant sees.</strong> This is the part I care most about. Each
+            ant gets its own small view: where it holds the load, where the load is,
+            where the goal is, how the load is moving right under its own feet, and how
+            far the tips of the load are from the slit corners. About thirty numbers.
+            Nothing about the other ants. Not even how many there are.
+          </p>
+          <p>
+            <strong>What each ant decides.</strong> All ants share one small network. It
+            reads one ant&rsquo;s view and returns that ant&rsquo;s push. Run it five
+            times for five ants. Later in the post I give every ant its own network, and
+            we will see what changes.
+          </p>
+          <p>
+            There is no leader, no plan, no message. The only channel between the ants is
+            the load itself. When one ant pushes, the others feel the load move.
+          </p>
+        </section>
+
+        <!-- 3 ---------------------------------------------------------- -->
+        <section class="section" id="physics">
+          <h2><span class="num">03</span>First check: is it physically possible?</h2>
+          <p>
+            Before training anything, I checked one thing. Can many small pushes even do
+            what one big push did?
+          </p>
+          <p>
+            I took the single-agent policy from part one and split its push across N ants
+            with a formula.
+          </p>
+          <p>
+            Here is the formula in words. The single agent produces two things each
+            step: a push (a direction and a strength) and a turn. Now N ants have to
+            produce the same push and the same turn together, each one pushing at its
+            own point on the T.
+          </p>
+          <ul>
+            <li>
+              <strong>The push is easy.</strong> Give every ant an equal share: the total
+              push divided by N. All ants push the same way, and the shares add up to
+              the total.
+            </li>
+            <li>
+              <strong>The turn is the interesting part.</strong> A push at a point away
+              from the centre also turns the load, like pushing the end of a door. So
+              every ant gets a second, small push, sideways, whose size depends on how
+              far it is from the centre. Ants far from the centre push harder sideways.
+              Ants near the centre barely push sideways at all. Ants on opposite sides
+              push in opposite directions. These sideways pushes add up to zero push,
+              but they add up to the turn.
+            </li>
+          </ul>
+          <figure>
+            <img src="assets/split_formula.png" alt="The split formula in four panels: the single agent's push and turn, the equal push shares, the sideways turn shares, and their sum per ant.">
+            <figcaption>The split, drawn on the real five-ant layout. Blue: the push, shared equally. Purple: the sideways parts that make the turn. Red: what each ant is told to do.</figcaption>
+          </figure>
+          <p>
+            Each ant&rsquo;s push is the sum of these two parts. There are many ways to
+            split one push and one turn among N ants. The formula picks the one with the
+            smallest pushes in total, so no ant works harder than it must. It has a
+            closed form, and I checked it against a numerical solver to machine
+            precision.
+          </p>
+          <p>
+            One thing to notice. To compute its sideways part, an ant needs to know where
+            it is <em>relative to all the other ants</em>. So the formula is
+            centralised. It knows where everyone holds. That is fine for a check, and
+            fine for a teacher at training time. It is not what the ants do.
+          </p>
+          <table>
+            <thead><tr><th>Ants</th><th>Success</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td>95%</td></tr>
+              <tr><td>10</td><td>95%</td></tr>
+              <tr><td>50</td><td>95%</td></tr>
+              <tr><td>100</td><td>95%</td></tr>
+            </tbody>
+          </table>
+          <p>
+            Identical, to the last decimal. Even 100 ants can copy the single agent
+            exactly. So the physics is fine. If the swarm fails, it fails at learning.
+          </p>
+          <p>This check took an hour. It saved me weeks of wondering later.</p>
+        </section>
+
+        <!-- 4 ---------------------------------------------------------- -->
+        <section class="section" id="failures">
+          <h2><span class="num">04</span>Five failures</h2>
+          <p>
+            Then I tried to make the ants learn. I tried five things. All five scored
+            zero.
+          </p>
+          <p>
+            The first three are <strong>imitation</strong>. The formula from section 03
+            knows the right push for every ant in every situation. So I recorded
+            thousands of situations, asked the formula for the right pushes, and trained
+            the ants to copy them. Each ant sees only its own view and has to output its
+            own push.
+          </p>
+          <ol>
+            <li>
+              <strong>Copy the push directly.</strong> The network outputs the push
+              itself: a direction and a strength. The simplest possible version.
+            </li>
+            <li>
+              <strong>Copy two numbers instead.</strong> The formula builds every push
+              from two shared parts: a share of the total push, which is the same for
+              every ant, and a share of the total turn, which depends on where the ant
+              holds the load. So the network outputs those two numbers, and the push is
+              computed from them. The idea was that two numbers are easier to learn than
+              a direction and a strength.
+            </li>
+            <li>
+              <strong>The same, on a log scale.</strong> The turn share is tiny for ants
+              near the middle and large for ants at the ends. A plain error measure
+              ignores the tiny ones. A log scale treats a 10% mistake the same whether
+              the value is small or large.
+            </li>
+          </ol>
+          <p>
+            The last two are <strong>reinforcement learning</strong>. No formula, no
+            copying. The ants try pushes, get a reward, and keep what worked. This is
+            multi-agent PPO: one shared network, one ant&rsquo;s view in, one ant&rsquo;s
+            push out, and one reward for the whole team.
+          </p>
+          <ol start="4">
+            <li>
+              <strong>Reward only for success.</strong> One point when the load reaches
+              the goal, zero the rest of the time. The same reward that failed for one
+              agent in part one.
+            </li>
+            <li>
+              <strong>The BFS reward.</strong> The teacher&rsquo;s reward from part one: a
+              small reward every step for moving closer to the goal along the real
+              route. This is what solved the single-agent task.
+            </li>
+          </ol>
+          <table>
+            <thead><tr><th>Attempt</th><th>Kind</th><th>Success</th></tr></thead>
+            <tbody>
+              <tr><td>1. Copy the push directly</td><td>imitation</td><td>0%</td></tr>
+              <tr><td>2. Copy two numbers</td><td>imitation</td><td>0%</td></tr>
+              <tr><td>3. Two numbers, log scale</td><td>imitation</td><td>0%</td></tr>
+              <tr><td>4. PPO, reward only for success</td><td>RL</td><td>0%</td></tr>
+              <tr><td>5. PPO, BFS reward</td><td>RL</td><td>0%</td></tr>
+            </tbody>
+          </table>
+          <div class="callout callout--fail">
+            <p>
+              The strange thing was the first three. The ants were learning the
+              teacher&rsquo;s pushes almost perfectly. The training error was tiny. Each
+              ant was one to five percent off. And the load went nowhere.
+            </p>
+          </div>
+          <p>How can a few percent per ant add up to nothing? The next section is the answer.</p>
+        </section>
+
+        <!-- 5 ---------------------------------------------------------- -->
+        <section class="section" id="obstacle">
+          <h2><span class="num">05</span>The obstacle, measured</h2>
+          <p>
+            So I stopped training and started measuring. I let the ants push along the
+            teacher&rsquo;s own route and compared, at every step, what the ants pushed
+            with what the teacher wanted.
+          </p>
+          <figure>
+            <img src="assets/wrench_errors.png" alt="Bar chart: each ant's own error is a few percent, the error of the total turn is 90 to 357 percent.">
+            <figcaption>Each ant is nearly right. Their sum is very wrong.</figcaption>
+          </figure>
+          <p>
+            Look at the red bars. Each ant is a few percent wrong. The <strong>turn</strong>
+            they make together is 90% wrong with two ants, and 357% wrong with a hundred.
+          </p>
+          <p>
+            Here is why. Look back at the split figure. Each ant&rsquo;s push has two
+            parts: a big part that moves the load, and a small sideways part that turns
+            it. The sideways parts of ants on opposite sides point in opposite
+            directions. As pushes they cancel. As a turn they add up.
+          </p>
+          <p>
+            An ant&rsquo;s error is a few percent of its <em>whole</em> push. But the
+            turning part is only a small piece of that push. So a 3% error on the whole
+            push can be a 30% error on the turning part. And when you add the ants up,
+            the turning parts cancel, but the errors do not. Each ant&rsquo;s error is
+            its own. They pile up.
+          </p>
+          <p>
+            A two-ant example, with numbers. Two ants at the ends of the T. The formula
+            says: ant A pushes down with 1.00, ant B pushes up with 1.00. Net push zero,
+            and a clean turn. Now each ant is 5% off. A pushes 1.00 down and 0.05 to the
+            left. B pushes 1.00 up and 0.05 to the left. The turn is still right. But
+            the load also slides left with 0.10, which nobody asked for. Over 500 steps
+            that slide is about one metre, in a maze 1.65 m wide. The load misses the
+            slit.
+          </p>
+          <figure>
+            <img src="assets/cancel_example.png" alt="Two ants: the formula's pushes, the same pushes with a 5 percent error each, and what the load gets: the right turn plus a slide nobody asked for.">
+            <figcaption>The two-ant example. The big pushes cancel as they should. The small errors do not cancel, and the load slides.</figcaption>
+          </figure>
+          <p>The signal cancels, the noise survives. That is the whole obstacle.</p>
+          <p>
+            This is not a learning problem in the usual sense. The loss said the ants
+            were good. The load said they were not. Only the load was right.
+          </p>
+          <p>
+            There was one more thing I measured. Can an ant tell how many others are
+            holding the load? I trained a small probe on one ant&rsquo;s view. It guessed
+            the group size correctly 93% of the time. The load moves slower with more
+            ants, and the ant can feel that. So the ants have the information. Adding up
+            their pushes is what breaks.
+          </p>
+        </section>
+
+        <!-- 6 ---------------------------------------------------------- -->
+        <section class="section" id="fixes">
+          <h2><span class="num">06</span>Three fixes, and the first success</h2>
+          <p>The measurement told me what to fix. It took two rounds.</p>
+          <p>
+            <strong>Round one: a teacher that hands out pushes.</strong> Instead of hoping
+            the ants find the right pushes, I let the formula from section 03 label them.
+            Each ant learned to copy its own share. To keep the ants on the road, I used
+            DAgger: let the students drive, let the teacher say what they should have
+            done, learn from that, repeat.
+          </p>
+          <p>
+            That gave the first non-zero result: <strong>91%</strong> on 200 fresh
+            episodes. Five ants, each seeing only its own view. A small victory, but a
+            borrowed one. It needed the formula, and the formula needs to know where all
+            the ants are.
+          </p>
+          <p>
+            <strong>Round two: pure learning, no formula.</strong> I wanted the ants to
+            find the pushes themselves. Looking at what works in the literature on this
+            kind of task, my setup was missing three things:
+          </p>
+          <ol>
+            <li>
+              <strong>A judge that sees everyone.</strong> In PPO there is a second
+              network that judges how good a situation is. Mine looked at one
+              ant&rsquo;s view. That is a judge who cannot see the other players. Now it
+              sees all ants&rsquo; views at once. Only the judge is shared. Each ant still
+              acts on its own view.
+            </li>
+            <li>
+              <strong>Feel the load under your own feet.</strong> The ants&rsquo; view had
+              the load&rsquo;s speed at its centre. It did not have the speed at the point
+              where the ant is holding. That is the one thing the ants really
+              communicate through. I added it.
+            </li>
+            <li>
+              <strong>Thirty workers that were one worker.</strong> This one was a bug,
+              and an ugly one. Training ran on thirty parallel copies of the maze. All
+              thirty had the same random seed. So I had one experience copied thirty
+              times. The &ldquo;too good&rdquo; training error from section 04 was the
+              tell.
+            </li>
+          </ol>
+          <p>
+            With those three, and nothing else, pure multi-agent RL learned the maze.
+            Five ants, from zero, no formula, no demonstrations.
+          </p>
+        </section>
+
+        <!-- 7 ---------------------------------------------------------- -->
+        <section class="section" id="fair">
+          <h2><span class="num">07</span>A fair fight: one ant against five</h2>
+          <p>
+            Now I could ask the question from the top of the post. Does the group do
+            better than one?
+          </p>
+          <p>
+            Same maze, same reward, same network size, same random seed, same twenty
+            million steps of training. The only difference is the <code>ants</code> line
+            in the config file. One ant in the middle, with its spin. Or five ants,
+            spread over the T, with no spin.
+          </p>
+          <table>
+            <thead><tr><th></th><th>Success on 200 fresh episodes</th></tr></thead>
+            <tbody>
+              <tr><td>One ant</td><td>88%</td></tr>
+              <tr><td>Five ants</td><td><strong>96%</strong></td></tr>
+            </tbody>
+          </table>
+          <p>
+            The swarm learned faster, and ended higher. Even though the single ant has
+            the easier job, with its spin action.
+          </p>
+          <p>For about a day I believed the swarm was smarter.</p>
+        </section>
+
+        <!-- 8 ---------------------------------------------------------- -->
+        <section class="section" id="data">
+          <h2><span class="num">08</span>Why? Data, not teamwork</h2>
+          <p>
+            Here is what I had missed. Five ants share one network. Every step of the
+            maze, that network sees five views and learns from five pushes. The single
+            ant&rsquo;s network sees one. Same number of steps, five times the data.
+          </p>
+          <p>
+            So I gave the single ant five times the data too. Each training worker now
+            runs five copies of the maze instead of one. Nothing else changed.
+          </p>
+          <figure>
+            <img src="assets/swarm_vs_single_samples.png" alt="Two plots: success by training steps, and success by number of pushes learned from. On the data axis all three runs overlap.">
+            <figcaption>Left: by time. Right: the same runs by data. On the data axis the three lines overlap.</figcaption>
+          </figure>
+          <p>
+            Three runs. Blue: one ant, one maze. Red: five ants, one maze. Green: one
+            ant, five mazes. Higher is better.
+          </p>
+          <p>
+            <strong>Left plot: success against training time.</strong> Blue, the plain
+            single ant, is the slowest. Red and green reach the top at about the same
+            time. So one ant with five mazes learns as fast as five ants with one maze.
+          </p>
+          <p>
+            <strong>Right plot: the same three runs, but the x-axis is data.</strong>
+            Instead of &ldquo;how long did it train&rdquo;, it asks &ldquo;how many pushes
+            did the network learn from&rdquo;. A step with five ants gives five pushes,
+            and a step with five mazes also gives five pushes. On this axis all three
+            lines fall on top of each other. Given the same amount of data, one ant and
+            five ants learn at the same speed.
+          </p>
+          <table>
+            <thead><tr><th></th><th>Success on 200 fresh episodes</th></tr></thead>
+            <tbody>
+              <tr><td>One ant, one maze per worker</td><td>88%</td></tr>
+              <tr><td>Five ants, one shared brain</td><td>96%</td></tr>
+              <tr><td>One ant, five mazes per worker</td><td><strong>100%</strong></td></tr>
+            </tbody>
+          </table>
+          <div class="callout callout--result">
+            <p>
+              <span class="result-number">100% with the same data</span>
+              With the same amount of data, one ant beats the swarm. The swarm&rsquo;s
+              advantage was not cooperation. It was five samples per step.
+            </p>
+          </div>
+          <p>
+            One thing this does not say: that the swarm has no advantage at all. Early
+            in training, at equal data and equal updates, the swarm is still ahead: 93%
+            against 80% after three million steps. Five pushes at five points move the load in more
+            useful ways than one push and a spin. That head start is real. But by the end
+            it is gone.
+          </p>
+          <p>
+            This is the lesson of the post, if there is one. <strong>Before you believe a
+            swarm is smarter, count its samples.</strong>
+          </p>
+        </section>
+
+        <!-- 9 ---------------------------------------------------------- -->
+        <section class="section" id="ten">
+          <h2><span class="num">09</span>Ten ants, and one brain per ant</h2>
+          <p>The ants in the PNAS paper get better in bigger groups. Do mine?</p>
+          <p>
+            I doubled the group to ten ants, four on each head and two on the stem. Same
+            recipe. It started as fast as five ants. Then something new happened. It
+            reached 94%, and slid back down. At the end of training it was at 80%.
+          </p>
+          <p>
+            Looking inside, the ten ants had learned to push softer and softer, and their
+            pushes had become almost deterministic. Each ant&rsquo;s share of the turn is
+            smaller with ten ants, and section 05 told us that summed errors grow with
+            the group size. A policy that no longer explores cannot climb back out.
+          </p>
+          <p>
+            Then I tried the thing I had been curious about since the start.
+            <strong>Give every ant its own brain.</strong> No shared network. Each ant
+            gets its own network, its own random start, and even a slightly different
+            shape: a little wider or narrower, a different activation function. Five
+            different brains, or ten.
+          </p>
+          <figure>
+            <img src="assets/shared_vs_independent.png" alt="Success over training for five and ten ants, with one shared brain or one brain per ant.">
+            <figcaption>Sharing one brain is faster at first. Separate brains end just as high, and do not fall back.</figcaption>
+          </figure>
+          <p>Two things happened.</p>
+          <p>
+            First, separate brains learn <strong>slower</strong>. Of course they do. Each
+            brain now sees one view per step instead of five. Section 08 again.
+          </p>
+          <p>Second, they end <strong>just as high, and they do not slide back</strong>.</p>
+          <table>
+            <thead><tr><th>Swarm</th><th>Success on 200 fresh episodes</th></tr></thead>
+            <tbody>
+              <tr><td>5 ants, one shared brain</td><td>96%</td></tr>
+              <tr><td>5 ants, one brain each</td><td><strong>98%</strong></td></tr>
+              <tr><td>10 ants, one shared brain</td><td>80% (peak 94%)</td></tr>
+              <tr><td>10 ants, one brain each</td><td><strong>94%</strong></td></tr>
+            </tbody>
+          </table>
+          <figure>
+            <video src="assets/swarm10_success.mp4" autoplay loop muted playsinline></video>
+            <figcaption>Ten ants, ten brains, one load.</figcaption>
+          </figure>
+          <p>
+            Ten different networks, that never share a weight and never send a message,
+            carry the load through the maze together. The only thing they have in common
+            is the load under their feet. That was enough.
+          </p>
+          <p>
+            So do my ants get better in bigger groups, like the real ones? Not yet. Ten
+            is not better than five. But ten is not worse either, once every ant has its
+            own brain. And I did not tune anything for ten.
+          </p>
+        </section>
+
+        <!-- 10 --------------------------------------------------------- -->
+        <section class="section" id="teacher">
+          <h2><span class="num">10</span>The one thing that still matters: the teacher</h2>
+          <p>
+            Every run above used the BFS teacher from part one. Not as a curriculum this
+            time, only as the reward: a small reward for every step that brings the load
+            closer to the goal <em>along the real route</em>.
+          </p>
+          <p>
+            In part one, one agent without that teacher never passed the second slit. Not
+            with a shaped reward, not with hindsight replay, not with exploration bonuses,
+            not with Go-Explore. I wanted to know: does a swarm change that?
+          </p>
+          <p>
+            So I took the teacher away. The reward became the plain straight-line
+            distance to the goal, plus the success bonus. Five ants, each with its own
+            brain, twenty million steps. I ran it with PPO. Then I ran it with SAC, with
+            the same two-pool trick from part one that keeps rare successes from being
+            forgotten.
+          </p>
+          <figure>
+            <img src="assets/no_map.png" alt="Success over training: with the BFS teacher the curve rises to 100 percent, without it two curves stay at zero.">
+            <figcaption>Without the teacher, nothing happens in 20 million steps.</figcaption>
+          </figure>
+          <div class="callout callout--fail">
+            <p>
+              Zero. Both. Not one success in forty million steps. The success pool in the
+              SAC run never received a single episode, because there never was one.
+            </p>
+          </div>
+          <figure>
+            <video src="assets/swarm5_nomap_stuck.mp4" autoplay loop muted playsinline></video>
+            <figcaption>Five ants, no teacher. They bring the load to the slit and push it into the wall until time runs out.</figcaption>
+          </figure>
+          <p>
+            The picture is the same as in part one. The ants bring the load to the first
+            slit and push it into the wall, because that is where the straight line to
+            the goal goes. Nothing ever tells them to turn away and go around.
+          </p>
+          <p>
+            Five ants do not explore their way through. More pushes at more points do
+            help, but only when there is a signal that says which motion was progress.
+            Without the map, there is none.
+          </p>
+        </section>
+
+        <!-- 11 --------------------------------------------------------- -->
+        <section class="section" id="learned">
+          <h2><span class="num">11</span>What I learned</h2>
+          <p>Six things, from a month with the swarm.</p>
+          <ol>
+            <li>
+              <strong>A swarm of five or ten ants can solve the maze.</strong> Each ant
+              sees only its own small view. No leader, no message, no map at test time,
+              no ant count.
+            </li>
+            <li>
+              <strong>The five failures were bugs, not algorithms.</strong> A judge that
+              saw one player. A view without the load&rsquo;s motion at the ant&rsquo;s
+              feet. Thirty workers that were one. Each was measured before it was fixed.
+            </li>
+            <li>
+              <strong>The swarm&rsquo;s speed was data, not teamwork.</strong> Give one
+              ant the same data and it wins, 100% to 96%.
+            </li>
+            <li>
+              <strong>Sharing a brain is optional.</strong> Ten different brains, no
+              shared weights, cooperate fine. They learn slower and do not collapse.
+            </li>
+            <li>
+              <strong>The BFS teacher is the one thing nothing replaces.</strong> With it,
+              every recipe works. Without it, nothing crosses the second slit. Not one
+              agent, not five, not PPO, not SAC.
+            </li>
+            <li>
+              <strong>Test on episodes the agent never saw.</strong> Several numbers in
+              this post were higher on the training evaluation. 98% became 91%. 100%
+              became 85%. Every number here comes from 200 fresh episodes.
+            </li>
+          </ol>
+        </section>
+
+        <!-- 12 --------------------------------------------------------- -->
+        <section class="section" id="open">
+          <h2><span class="num">12</span>What stays open</h2>
+          <p>Three things I did not solve.</p>
+          <p>
+            <strong>A new grip.</strong> Every swarm was trained with the ants at fixed
+            points on the T. Move the ants to different points, and the success rate is
+            zero. The ants learned the maze for their own grip, not for any grip. Real
+            ants regrip all the time.
+          </p>
+          <p>
+            <strong>Learning without the map.</strong> Part one and section 10 of this
+            post say the same thing. Something has to tell the agents that turning away
+            from the goal is progress. I do not know yet how to do that without a map of
+            the maze.
+          </p>
+          <p>
+            <strong>One seed.</strong> Every number in this post is one training run. An
+            earlier run of the five-ant swarm, with a different seed, got 30%. The recipe
+            is sensitive. Three seeds per number is the right next step.
+          </p>
+        </section>
+
+        <!-- code ------------------------------------------------------- -->
+        <section class="section" id="code">
+          <h2>Come and play with it</h2>
+          <p>Everything is on GitHub, and it is open:</p>
+          <div class="actions">
+            <a class="button button--primary" href="https://github.com/RezaKakooee/ant-piano-movers-rl">github.com/RezaKakooee/ant-piano-movers-rl</a>
+          </div>
+          <p>
+            The environment, the multi-agent trainer, the SAC version with the two
+            pools, the ten-ant config, and the scripts that made every figure in this
+            post.
+          </p>
+          <p>
+            If you find a way through the maze without a map, or a swarm that gets better
+            with size the way real ants do, I would love to hear about it. Open an issue,
+            or write to me. And if you work on collective behaviour or multi-agent RL,
+            please get in touch.
+          </p>
+        </section>
+
+        <!-- cite ------------------------------------------------------- -->
+        <section class="section" id="cite">
+          <h2>Cite this post</h2>
+          <p>If this write-up is useful in your work, you can cite it as a blog post:</p>
+<pre><code>@misc{kakooee2026antswarm2,
+  author       = {Kakooee, Reza},
+  title        = {Can a Swarm of {AI} Ants Solve the Puzzle?},
+  year         = {2026},
+  howpublished = {\url{https://rezakakooee.github.io/ant-swarm-rl/}},
+  note         = {Blog post, part two. Code: \url{https://github.com/RezaKakooee/ant-piano-movers-rl}}
+}</code></pre>
+          <p>Or in plain text:</p>
+          <p class="mono" style="font-size:.9rem;color:var(--muted)">
+            Kakooee, R. (2026). <em>Can a swarm of AI ants solve the puzzle?</em>
+            Blog post. https://rezakakooee.github.io/ant-swarm-rl/
+          </p>
+          <p>Please also cite the experiment this work reproduces:</p>
+<pre><code>@article{dreyer2025ants,
+  author  = {Dreyer, Tabea and Haluts, Amir and Korman, Amos and
+             Gov, Nir and Fonio, Ehud and Feinerman, Ofer},
+  title   = {Comparing cooperative geometric puzzle solving in ants versus humans},
+  journal = {Proceedings of the National Academy of Sciences},
+  year    = {2025},
+  doi     = {10.1073/pnas.2414274121}
+}</code></pre>
+        </section>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="inner">
+        <p>
+          Reference: Dreyer et&nbsp;al., &ldquo;Comparing cooperative geometric puzzle
+          solving in ants versus humans&rdquo;, PNAS 2025. Part one:
+          <a href="https://rezakakooee.github.io/ant-piano-movers-rl/">Can an AI agent solve the puzzle that ants solve?</a>
+        </p>
+        <div>
+          <a href="https://github.com/RezaKakooee/ant-piano-movers-rl">GitHub</a>
+          <a href="https://x.com/rezakakooee">X</a>
+          <a href="https://www.linkedin.com/in/reza-kakooee/">LinkedIn</a>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

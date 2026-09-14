@@ -5,8 +5,7 @@ replaying each episode in the deterministic env.  Single-core that is ~4.3 h
 for all 34,777 episodes; this splits the episodes across processes, so a
 384-core CPU node does it in minutes.
 
-    sbatch -M calc-cpu -p cpu-daily -c 64 --mem=64G --wrap \
-      "python scripts/il/build_replay_cache.py --workers 64 --out storage_local/cache/replay_full.npz"
+    python scripts/il/build_replay_cache.py --workers 64 --out storage_local/cache/replay_full.npz
 """
 from __future__ import annotations
 

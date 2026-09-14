@@ -23,7 +23,7 @@ Start  │    │    Chamber    │      │  Goal
 
 The load must enter the first slit **big-head-first**, rotate $180^\circ$ inside the narrow chamber, and exit the second slit **small-head-first**.
 
-![5-Episode Evaluation Grid](assets/eval_all_5episodes_grid.gif)
+<img src="assets/eval_all_5episodes_grid.gif" alt="5-Episode Evaluation Grid" width="720">
 
 ---
 
