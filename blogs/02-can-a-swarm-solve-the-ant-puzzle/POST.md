@@ -1,5 +1,22 @@
 # Can a swarm of AI ants solve the puzzle?
 
+This is part two of a side project. The puzzle comes from a real experiment
+with ants. A T-shaped load has to go from one room, through a narrow slit,
+into a short corridor, and out through a second slit into the goal room. The
+big head of the T does not fit through a slit straight on. So the load has to
+go in big head first, tilted, turn inside the corridor, and come out small
+head first. Real ants do this together, dozens of them, with no leader.
+
+In [part one](https://rezakakooee.github.io/ant-piano-movers-rl/) one AI
+agent learned this maneuver with reinforcement learning. In this post the
+load is carried by five, then ten, agents. Each one pushes at its own point,
+sees only its own small view, and never talks to the others. The task is
+also harder than in part one: the load starts anywhere in the first room, at
+any angle, and the goal is drawn anywhere in the last room.
+
+The post follows the work in order: five failed attempts, one measurement
+that explained them, the fixes, and then three results I did not expect.
+
 ## 1. Where we left off
 
 In the [first post](https://rezakakooee.github.io/ant-piano-movers-rl/) one
@@ -23,8 +40,22 @@ five failures first.
 
 ## 2. What changes with many ants
 
-Everything about the maze stays the same. What changes is who is holding
-the load.
+The maze is the same. The task is harder than in post 1, in three ways.
+
+- **Random start.** In post 1 the load always started at the same place. Now
+  it starts anywhere in the start room, at any angle.
+- **Random goal.** In post 1 the goal was one fixed point. Now it is drawn
+  anywhere in the goal room, and the big head has to reach it.
+- **No curriculum.** Post 1 trained in stages, from easy starts to the real
+  start. Here there are no stages. Every episode is the full task from the
+  first step of training.
+
+The BFS teacher is still there, but only as a reward: a small reward for
+every step that brings the load closer to the goal along the real route. And
+"success" everywhere in this post means: 200 fresh episodes, with start
+poses and goals the ants never saw in training.
+
+What really changes is who is holding the load.
 
 <img src="ant-swarm-rl/assets/ant_layouts.png" alt="Where the ants hold the load" width="720">
 
